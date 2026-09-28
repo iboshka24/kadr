@@ -151,9 +151,19 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
 
 /**
  * Спрашивает модель и возвращает разобранный JSON.
- * Провайдеры перебираются по кругу; отказ по квоте не считается ошибкой стадии.
+ *
+ * Провайдеры перебираются по кругу, но отказ по квоте больше не означает
+ * «делать нечего»: у бесплатных тарифов квота минутная, и через полминуты тот же
+ * сервис отвечает. Раньше код сразу уходил к следующему провайдеру, упирался в
+ * его квоту и падал — хотя достаточно было подождать. Поэтому на 429 и обрывах
+ * ждём и повторяем тот же адрес, с растущей паузой.
+ *
+ * Отдельно про ответ, который не прошёл проверку JSON: у Groq это
+ * `json_validate_failed`, и лечится повтором — обычно со второй попытки проходит.
  */
-export async function askJson({ system, user, env = loadEnv(), json = true, temperature = 0.85, attempts = 2 }) {
+const QUOTA_WAITS = [25_000, 60_000, 120_000];
+
+export async function askJson({ system, user, env = loadEnv(), json = true, temperature = 0.85, attempts = 3 }) {
   const providers = [
     ["gemini", callGemini],
     ["groq", callGroq],
@@ -161,15 +171,33 @@ export async function askJson({ system, user, env = loadEnv(), json = true, temp
   const problems = [];
 
   for (const [name, call] of providers) {
+    let quotaWaits = 0;
+
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
         const text = await call({ system, user, env, json, temperature });
         return json ? extractJson(text) : text;
       } catch (err) {
-        const quota = err instanceof LlmUnavailable || /квота|429/.test(err.message);
-        problems.push(`${name}: ${err.message}`);
-        if (!quota && attempt < attempts) await sleep(1500 * attempt);
-        if (quota) break; // на этом провайдере делать нечего — идём к следующему
+        const message = String(err?.message ?? err);
+        const quota = err instanceof LlmUnavailable || /квота|429/.test(message);
+        const badJson = /json_validate_failed|Failed to validate JSON/i.test(message);
+        problems.push(`${name}: ${message.slice(0, 160)}`);
+
+        const lastAttempt = attempt === attempts;
+        if (quota && !lastAttempt && quotaWaits < QUOTA_WAITS.length) {
+          const wait = QUOTA_WAITS[quotaWaits++];
+          console.log(`  ${name}: квота, жду ${Math.round(wait / 1000)} с и пробую снова`);
+          await sleep(wait);
+          continue;
+        }
+        if (badJson && !lastAttempt) {
+          // Ответ не прошёл проверку: повторяем, но просим короче.
+          console.log(`  ${name}: ответ не разобрался как JSON, пробую снова`);
+          await sleep(2000);
+          continue;
+        }
+        if (!quota && !lastAttempt) await sleep(1500 * attempt);
+        if (quota) break;
       }
     }
   }
