@@ -177,3 +177,44 @@ test("финал-призыв к подписке отклоняется", async
     "финал с призывом подписаться обязан быть ошибкой",
   );
 });
+
+test("вопрос в первом кадре отклоняется, конкретный заход проходит", async () => {
+  const { validateScript } = await import("../src/validate.js");
+  const shots = Array.from({ length: 24 }, (_, i) => ({
+    n: i + 1,
+    narration: "In 1970 the Ford Pinto reached the market at two thousand dollars.",
+    onScreen: "кадр",
+    animated: i % 6 === 0,
+  }));
+
+  const good = validateScript({ minutes: 1.5, shots: shots.map((s) => ({ ...s })) });
+  assert.ok(
+    !good.errors.some((e) => e.includes("вопросом")),
+    "конкретный заход с годом и именем не должен вызывать ошибок",
+  );
+
+  const asky = structuredClone(shots);
+  asky[0].narration = "When you walk into a supermarket, what do you look for first?";
+  const checked = validateScript({ minutes: 1.5, shots: asky });
+  assert.ok(
+    checked.errors.some((e) => e.includes("вопросом")),
+    "первый кадр-вопрос обязан быть ошибкой",
+  );
+});
+
+test("общий заход без конкретики поднимает предупреждение", async () => {
+  const { validateScript } = await import("../src/validate.js");
+  const shots = Array.from({ length: 24 }, (_, i) => ({
+    n: i + 1,
+    narration: i === 0
+      ? "People buy things in shops every single day of their lives without thinking"
+      : "Some ordinary words follow here about all sorts of things in daily life",
+    onScreen: "кадр",
+    animated: i % 6 === 0,
+  }));
+  const checked = validateScript({ minutes: 1.5, shots });
+  assert.ok(
+    checked.warnings.some((w) => w.includes("конкретики")),
+    "заход без числа и имени должен давать предупреждение",
+  );
+});
