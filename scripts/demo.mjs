@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 import { loadEnv, providersAvailable } from "../src/providers/llm.js";
 import { synthesize, alignShots } from "../src/providers/voice.js";
+import { collectPanels } from "../src/providers/image.js";
 import { assemble, describeFilm } from "../src/assemble.js";
 import {
   stageStyle,
@@ -122,9 +123,25 @@ console.log(
 const timed = alignShots(script.output.shots, voice.words);
 save("timed_shots", timed);
 
-step("8. Сборка");
+step("8. Картинки для кадров");
+const panels = await collectPanels({
+  projectDir: OUT,
+  shots: script.output.shots,
+  prompts: imagePrompts.output.prompts,
+  env,
+  log: (line) => console.log(line),
+});
+console.log(`готовых картинок ${panels.rendered.size} из ${script.output.shots.length}, источник: ${panels.provider}`);
+
+step("9. Сборка");
 const film = describeFilm(
-  assemble({ shots: timed, voicePath: voice.audio, words: voice.words, outDir: join(OUT, "video") }),
+  assemble({
+    shots: timed,
+    voicePath: voice.audio,
+    words: voice.words,
+    outDir: join(OUT, "video"),
+    rendered: panels.rendered,
+  }),
 );
 save("film", film);
 console.log(`файл: ${film.video}`);

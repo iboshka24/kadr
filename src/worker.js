@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { openDb, claimJob, finishJob, markStage, queueDepth, STAGES } from "./db.js";
 import { loadEnv } from "./providers/llm.js";
 import { synthesize, alignShots } from "./providers/voice.js";
+import { collectPanels } from "./providers/image.js";
 import { assemble, describeFilm } from "./assemble.js";
 import {
   stageTranscript,
@@ -128,9 +129,32 @@ async function runStage(projectId, stage) {
       const timed = readArtifact(projectId, "timed_shots");
       const voice = readArtifact(projectId, "voice");
       if (!timed || !voice) throw new Error("сначала озвучка");
+
+      // Картинки: инбокс руками → внешний провайдер → рисовальщик кодом.
+      const panels = await collectPanels({
+        projectDir: join(PROJECTS, projectId),
+        shots: timed,
+        prompts: ctx.imagePrompts?.prompts ?? [],
+        env,
+        log: (line) => console.log(`  ${line}`),
+      });
+
       const film = describeFilm(
-        assemble({ shots: timed, voicePath: voice.audio, words: [], outDir: join(PROJECTS, projectId, "video") }),
+        assemble({
+          shots: timed,
+          voicePath: voice.audio,
+          words: [],
+          outDir: join(PROJECTS, projectId, "video"),
+          rendered: panels.rendered,
+        }),
       );
+      writeArtifact(projectId, "panels", {
+        provider: panels.provider,
+        ready: panels.rendered.size,
+        drawnByNetwork: panels.drawn.length,
+        failed: panels.failed,
+        reasons: panels.reasons,
+      });
       writeArtifact(projectId, "film", film);
       return { output: film, errors: [], warnings: [] };
     }

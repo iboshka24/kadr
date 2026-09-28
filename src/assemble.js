@@ -51,8 +51,11 @@ function buildClip({ panel, seconds, lively, out }) {
   const zoomTo = lively ? 1.085 : 1.045;
   const step = (zoomTo - 1) / frames;
   const filter = [
-    // Сначала увеличиваем, потом панорамируем: так дрожание пикселей не видно.
-    `scale=${WIDTH * 2}:${HEIGHT * 2}:flags=lanczos`,
+    // Вписываем, а не растягиваем: картинка от нейросети приходит квадратной
+    // (1024×1024), и растягивание в 16:9 превратило бы человечка в приплюснутого.
+    // Лишнее поле закрашиваем цветом бумаги — он совпадает с фоном панелей.
+    `scale=${WIDTH * 2}:${HEIGHT * 2}:force_original_aspect_ratio=decrease:flags=lanczos`,
+    `pad=${WIDTH * 2}:${HEIGHT * 2}:(ow-iw)/2:(oh-ih)/2:color=0xFFFFFF`,
     `zoompan=z='min(zoom+${step.toFixed(6)},${zoomTo})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${WIDTH}x${HEIGHT}:fps=${FPS}`,
     "format=yuv420p",
   ].join(",");
