@@ -1,0 +1,213 @@
+/*
+ * Язык интерфейса: монтажный стол.
+ *
+ * Глубокий графит, тёплая бумага карточек, янтарный акцент и плёночная перфорация
+ * на каждом кадре. Цифры — моноширинным: это номера кадров, а не текст, и они
+ * должны стоять в столбце ровно.
+ */
+:root {
+  --ink: #14120f;
+  --ink-2: #1d1a16;
+  --ink-3: #262219;
+  --paper: #f3efe6;
+  --paper-dim: #b8b1a3;
+  --amber: #e8a33d;
+  --amber-deep: #c4811f;
+  --green: #7ba05b;
+  --red: #cf5a4a;
+  --line: #37312708;
+  --line-solid: #372f26;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font: 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── верхняя строка ── */
+.top {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line-solid);
+  background: linear-gradient(180deg, var(--ink-2), var(--ink));
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand b { font-size: 19px; letter-spacing: -0.01em; }
+.brand .tag { color: var(--paper-dim); font-size: 13px; }
+
+/* Метка бренда — кусок плёнки с перфорацией. */
+.mark {
+  width: 26px; height: 26px; border-radius: 4px; display: inline-block;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 4px, var(--ink) 4px 8px) top/100% 5px no-repeat,
+    repeating-linear-gradient(90deg, transparent 0 4px, var(--ink) 4px 8px) bottom/100% 5px no-repeat,
+    var(--amber);
+}
+
+.chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.chip {
+  font: 12px var(--mono);
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line-solid);
+  color: var(--paper-dim);
+}
+.chip.on { color: var(--ink); background: var(--amber); border-color: var(--amber); }
+.chip.off { opacity: .5; }
+
+.queue { font: 12px var(--mono); color: var(--paper-dim); }
+
+/* ── каркас ── */
+main { display: grid; grid-template-columns: 300px 1fr; gap: 22px; padding: 22px; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 14px; } }
+
+.rail { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 78px; }
+@media (max-width: 900px) { .rail { position: static; } }
+
+.card {
+  background: var(--ink-2);
+  border: 1px solid var(--line-solid);
+  border-radius: 12px;
+  padding: 16px;
+}
+.card h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--paper-dim); }
+
+label { display: block; font-size: 12px; color: var(--paper-dim); margin-bottom: 10px; }
+input, select {
+  width: 100%;
+  margin-top: 5px;
+  padding: 9px 10px;
+  background: var(--ink-3);
+  border: 1px solid var(--line-solid);
+  border-radius: 8px;
+  color: var(--paper);
+  font: 14px var(--sans);
+}
+input:focus, select:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+.row { display: flex; gap: 10px; }
+.row label { flex: 1; }
+
+button {
+  font: 14px var(--sans);
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line-solid);
+  background: var(--ink-3);
+  color: var(--paper);
+  cursor: pointer;
+}
+button:hover { border-color: var(--amber); color: var(--amber); }
+button.primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--ink);
+  font-weight: 600;
+  width: 100%;
+}
+button.primary:hover { background: var(--amber-deep); color: var(--ink); }
+button:disabled { opacity: .5; cursor: default; }
+
+.projects { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.projects button {
+  width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 8px;
+}
+.projects button.on { border-color: var(--amber); color: var(--amber); }
+.projects small { color: var(--paper-dim); font: 11px var(--mono); }
+
+/* ── сцена ── */
+.stage { min-width: 0; }
+.empty { color: var(--paper-dim); padding: 60px 0; text-align: center; }
+
+.head { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 18px; }
+.head h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.02em; }
+.sub { margin: 0; color: var(--paper-dim); font: 13px var(--mono); }
+.acts { display: flex; gap: 10px; margin-left: auto; align-items: center; }
+.acts button, .acts a { width: auto; }
+.acts a { text-decoration: none; display: inline-block; }
+
+/* Дорожка стадий: номер, название, состояние. */
+.stages {
+  list-style: none; margin: 0 0 22px; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 8px;
+}
+.stages li {
+  border: 1px solid var(--line-solid);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: var(--ink-2);
+  display: flex; flex-direction: column; gap: 3px;
+  cursor: pointer;
+}
+.stages li:hover { border-color: var(--amber); }
+.stages .n { font: 11px var(--mono); color: var(--paper-dim); }
+.stages .name { font-size: 14px; }
+.stages .state { font: 11px var(--mono); }
+.stages li.done { border-color: var(--green); }
+.stages li.done .state { color: var(--green); }
+.stages li.running { border-color: var(--amber); }
+.stages li.running .state { color: var(--amber); }
+.stages li.failed { border-color: var(--red); }
+.stages li.failed .state { color: var(--red); }
+
+.toolbar { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+.search { flex: 1; margin: 0; }
+.counter { font: 12px var(--mono); color: var(--paper-dim); }
+
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+
+/* Кадр: рамка с перфорацией сверху и снизу, как на плёнке. */
+.shot {
+  background: var(--paper);
+  color: #1a1713;
+  border-radius: 10px;
+  padding: 10px;
+  position: relative;
+  border-top: 13px solid var(--ink-3);
+  border-bottom: 13px solid var(--ink-3);
+  background-image:
+    repeating-linear-gradient(90deg, transparent 0 7px, var(--ink-2) 7px 12px);
+  background-repeat: no-repeat;
+  background-size: 100% 6px, 100% 6px;
+  background-position: top 3px left, bottom 3px left;
+}
+.frame { position: relative; border: 1px solid #d8d2c4; border-radius: 6px; overflow: hidden; background: #fff; }
+.frame .panel svg { display: block; width: 100%; height: auto; }
+.num {
+  position: absolute; top: 6px; left: 6px;
+  font: 11px var(--mono); background: var(--ink); color: var(--amber);
+  padding: 2px 6px; border-radius: 4px;
+}
+.anim {
+  position: absolute; top: 6px; right: 6px;
+  font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  background: var(--amber); color: #1a1713; padding: 2px 6px; border-radius: 4px;
+}
+.shot .narration { margin: 10px 2px 4px; font-size: 14px; line-height: 1.45; }
+.shot .onscreen { margin: 0 2px; font-size: 12px; color: #6c665a; }
+.shot details { margin-top: 8px; }
+.shot summary { font-size: 12px; color: #6c665a; cursor: pointer; }
+.shot .prompt {
+  font: 11px/1.5 var(--mono);
+  background: #eae5d9;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 6px 0;
+  word-break: break-word;
+  max-height: 190px;
+  overflow: auto;
+}
+.shot .copy { font-size: 11px; padding: 4px 9px; background: #fff; border-color: #cfc8b8; color: #1a1713; }
+.shot .copy:hover { border-color: var(--amber-deep); color: var(--amber-deep); }

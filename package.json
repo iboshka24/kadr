@@ -1,0 +1,13 @@
+{
+  "name": "kadr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Конвейер одного видео: транскрипт → ниша → паспорт стиля → раскадровка → промты → озвучка → сборка",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node src/server.js",
+    "worker": "node src/worker.js",
+    "test": "node --test test/"
+  }
+}

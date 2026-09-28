@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kadr — конвейер видео</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <b>kadr</b>
+    <span class="tag">конвейер одного видео</span>
+  </div>
+  <div class="chips" id="providers"></div>
+  <div class="queue" id="queue" title="заданий в очереди"></div>
+</header>
+
+<main>
+  <aside class="rail">
+    <form id="create" class="card">
+      <h2>Новое видео</h2>
+      <label>Тема
+        <input name="title" placeholder="Почему пончик стоит дешевле, чем кажется" required />
+      </label>
+      <div class="row">
+        <label>Минут
+          <input name="minutes" type="number" value="8" min="1" max="20" step="0.5" />
+        </label>
+        <label>Язык
+          <select name="language">
+            <option value="ru">русский</option>
+            <option value="en">english</option>
+          </select>
+        </label>
+      </div>
+      <button type="submit" class="primary">Создать</button>
+    </form>
+
+    <nav class="card">
+      <h2>Проекты</h2>
+      <ul id="projects" class="projects"></ul>
+    </nav>
+  </aside>
+
+  <section class="stage">
+    <div id="empty" class="empty">
+      <p>Слева создай видео или выбери готовое.</p>
+    </div>
+    <div id="view" hidden>
+      <div class="head">
+        <div>
+          <h1 id="title"></h1>
+          <p class="sub" id="sub"></p>
+        </div>
+        <div class="acts">
+          <button id="run-all" class="primary">Пройти весь конвейер</button>
+          <button id="copy-prompts">Скопировать все промты</button>
+          <a id="film" class="primary" hidden download>Скачать видео</a>
+        </div>
+      </div>
+
+      <ol class="stages" id="stages"></ol>
+
+      <div class="toolbar">
+        <label class="search">Фильтр кадров
+          <input id="filter" placeholder="например: анимация, стол, деньги" />
+        </label>
+        <span class="counter" id="counter"></span>
+      </div>
+
+      <div class="shots" id="shots"></div>
+    </div>
+  </section>
+</main>
+
+<template id="shot-tpl">
+  <article class="shot">
+    <div class="frame">
+      <div class="panel"></div>
+      <span class="num"></span>
+      <span class="anim" hidden>анимация</span>
+    </div>
+    <p class="narration"></p>
+    <p class="onscreen"></p>
+    <details>
+      <summary>Промт картинки</summary>
+      <p class="prompt"></p>
+      <button class="copy" type="button">Скопировать</button>
+    </details>
+    <details class="veo" hidden>
+      <summary>Промт анимации</summary>
+      <p class="prompt"></p>
+      <button class="copy" type="button">Скопировать</button>
+    </details>
+  </article>
+</template>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
