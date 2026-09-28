@@ -157,3 +157,23 @@ test("описание персонажа, не попавшее ни в оди�
   });
   assert.ok(warnings.some((w) => w.includes("ни разу не использовано")));
 });
+
+test("финал-призыв к подписке отклоняется", async () => {
+  const { validateScript } = await import("../src/validate.js");
+  const base = Array.from({ length: 24 }, (_, i) => ({
+    n: i + 1,
+    narration: "слово ".repeat(12).trim(),
+    onScreen: "кадр",
+    animated: i % 6 === 0,
+  }));
+  const good = validateScript({ minutes: 1.5, shots: base });
+  assert.deepEqual(good.errors, [], "обычный финал не должен вызывать ошибок");
+
+  const bad = structuredClone(base);
+  bad[23].narration = "Спасибо всем, кто досмотрел. Подпишись и жми колокольчик.";
+  const checked = validateScript({ minutes: 1.5, shots: bad });
+  assert.ok(
+    checked.errors.some((e) => e.includes("призыв к подписке")),
+    "финал с призывом подписаться обязан быть ошибкой",
+  );
+});

@@ -114,6 +114,19 @@ export function validateScript({ minutes, shots, language = "ru" }) {
     warnings.push(`анимаций почти нет: ${animated} из ${stats.shots}`);
   }
 
+  // Финал — это то, чем канал отличается. У всех проверенных каналов ниши
+  // (Trust Me Bro, easy actually, Tapakapa, Sprouts) последние слова — призыв
+  // подписаться, и финал поэтому не запоминается. Наш финал заканчивается
+  // разворотом на собственную жизнь зрителя, а не просьбой о подписке.
+  const last = shots[shots.length - 1];
+  const cta = /подпиш|подписывай|подпишись|лайк|колокольчик|subscrib|like and|patreon/i;
+  if (last?.narration && cta.test(String(last.narration))) {
+    errors.push(
+      "финал — призыв к подписке: так заканчивают все каналы ниши, " +
+        "а кадр должен переворачивать взгляд зрителя на его собственную жизнь",
+    );
+  }
+
   return { errors, warnings, stats: { ...stats, animated, animationShare: round(share) } };
 }
 
