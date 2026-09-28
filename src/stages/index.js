@@ -347,8 +347,34 @@ ${tail || "  (это начало фильма)"}
       // передышки следующий участок упирается в него же.
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, 6000));
 
-      const answer = await askJson({ env, system: SYSTEM_WRITER, user: blockTask, temperature: 0.9 });
-      const part = normalizeShots(answer.shots).map((shot) => ({ ...shot, n: shot.n + from - 1 }));
+      // Модель часто отдаёт меньше кадров, чем просили: она «закругляет» участок.
+      // Поэтому добираем остаток отдельными просьбами, пока не наберём нужное —
+      // иначе длинное видео незаметно превращается в короткое.
+      const wanted = to - from + 1;
+      let part = [];
+      for (let round = 1; round <= 4; round += 1) {
+        const need = wanted - part.length;
+        if (need <= 0) break;
+
+        const tailNow = part.length ? part.slice(-3).map((x) => `  ${x.narration}`).join("\n") : tail;
+        const roundTask = part.length
+          ? `${blockTask}
+
+Участок уже начат, вот последние написанные кадры:
+${tailNow}
+
+Допиши ровно ещё ${need} кадров — продолжай с этой мысли, не повторяй её. Номера с ${from + part.length}.`
+          : blockTask;
+
+        const answer = await askJson({ env, system: SYSTEM_WRITER, user: roundTask, temperature: 0.9 });
+        const got = normalizeShots(answer.shots);
+        if (!got.length) break;
+        part.push(...got);
+        if (round < 4 && part.length >= wanted) break;
+        if (part.length < wanted) await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+
+      part = part.slice(0, wanted).map((shot, i) => ({ ...shot, n: from + i }));
       const blockWords = part.reduce((sum, shot) => sum + countWords(shot.narration), 0);
       history.push({ block: index + 1, shots: part.length, words: blockWords, act: actFor(index, blockCount).split(":")[0] });
       console.log(

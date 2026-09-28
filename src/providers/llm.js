@@ -126,6 +126,9 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
     body: JSON.stringify({
       model,
       temperature,
+      // Явный предел ответа: сценарий на участок — это большой JSON, и без этого
+      // ответ приходит обрезанным.
+      max_tokens: 8000,
       ...(json ? { response_format: { type: "json_object" } } : {}),
       messages: [
         ...(system ? [{ role: "system", content: system }] : []),
@@ -163,6 +166,27 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
  */
 const QUOTA_WAITS = [25_000, 60_000, 120_000];
 
+/**
+ * Упёршиеся в квоту адреса, которые пока не трогаем.
+ *
+ * Если у сервиса кончилась дневная квота, он будет отказывать и через минуту, и
+ * через десять. Стучаться в него на каждом запросе — это по минуте впустую на
+ * каждое обращение: за длинный сценарий так теряется час. Поэтому адрес, дважды
+ * отказавший по квоте, уходит в остывание и пропускается без стука.
+ */
+const cooling = new Map();
+const COOLDOWN_MS = 10 * 60 * 1000;
+
+function isCooling(name) {
+  const until = cooling.get(name);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    cooling.delete(name);
+    return false;
+  }
+  return true;
+}
+
 export async function askJson({ system, user, env = loadEnv(), json = true, temperature = 0.85, attempts = 3 }) {
   const providers = [
     ["gemini", callGemini],
@@ -172,6 +196,11 @@ export async function askJson({ system, user, env = loadEnv(), json = true, temp
 
   for (const [name, call] of providers) {
     let quotaWaits = 0;
+
+    if (isCooling(name)) {
+      problems.push(`${name}: пропущен, квота исчерпана (остывает)`);
+      continue;
+    }
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
@@ -185,6 +214,15 @@ export async function askJson({ system, user, env = loadEnv(), json = true, temp
 
         const lastAttempt = attempt === attempts;
         if (quota && !lastAttempt && quotaWaits < QUOTA_WAITS.length) {
+          // Первый отказ по квоте может быть минутным — ждём и пробуем ещё раз.
+          // Второй подряд означает, что квота кончилась надолго: отправляем адрес
+          // остывать и больше не тратим на него время.
+          if (quotaWaits > 0) {
+            cooling.set(name, Date.now() + COOLDOWN_MS);
+            console.log(`  ${name}: квота держится, остывает ${Math.round(COOLDOWN_MS / 60000)} мин`);
+            problems.push(`${name}: отказал дважды по квоте, остывает`);
+            break;
+          }
           const wait = QUOTA_WAITS[quotaWaits++];
           console.log(`  ${name}: квота, жду ${Math.round(wait / 1000)} с и пробую снова`);
           await sleep(wait);
