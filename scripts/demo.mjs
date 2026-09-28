@@ -23,9 +23,12 @@ import {
   stageVideoPrompts,
 } from "../src/stages/index.js";
 
-const PROJECT = "ponchik";
+// Проект, длина и язык берутся из окружения: тем же кодом делается и русское
+// видео, и английское, и любое другое — без второй копии конвейера.
+const PROJECT = process.env.KADR_PROJECT ?? "ponchik";
 const OUT = join("/home/ibrohim/kadr/projects", PROJECT);
-const MINUTES = 1.5;
+const MINUTES = Number(process.env.KADR_MINUTES ?? 1.5);
+const LANGUAGE = process.env.KADR_LANG ?? "ru";
 mkdirSync(OUT, { recursive: true });
 
 const env = loadEnv();
@@ -46,9 +49,10 @@ const cached = (name) => {
 // Замысел вводим прямо здесь: транскрипта референса у нас пока нет, а проверять
 // конвейер надо на настоящем материале, а не на пустышке.
 const idea = {
-  title: "Почему пончик стоит дешевле, чем ты думаешь",
-  hook: "В одном пончике сорок граммов сахара. И это не ошибка рецепта.",
+  title: process.env.KADR_IDEA_TITLE ?? "Почему пончик стоит дешевле, чем ты думаешь",
+  hook: process.env.KADR_IDEA_HOOK ?? "В одном пончике сорок граммов сахара. И это не ошибка рецепта.",
   essence:
+    process.env.KADR_IDEA_ESSENCE ??
     "Дешёвая еда спроектирована так, чтобы её нельзя было съесть одну: сахар, жир и соль подобраны в пропорции, которая обходит сигнал сытости.",
   why: "Обыденная вещь, спрятанный механизм, чувство «мной управляли» — ядро ниши.",
 };
@@ -62,7 +66,7 @@ let style, params, concept, script, imagePrompts, videoPrompts;
 step("1. Паспорт стиля");
 style = { output: cached("style"), errors: [], warnings: [] };
 if (!style.output) {
-style = await stageStyle({ referenceNotes, env, language: "ru" });
+style = await stageStyle({ referenceNotes, env, language: LANGUAGE });
 if (style.errors.length) console.log("замечания:", style.errors);
 save("style", style.output);
 console.log("блок стиля:", String(style.output.styleBlock).slice(0, 120) + "…");
@@ -71,7 +75,7 @@ console.log("персонажей в листе:", style.output.characterSheet?.
 
 step("2. Параметры");
 params = { output: cached("params"), errors: [], warnings: [] };
-if (!params.output) params = await stageParams({ minutes: MINUTES, language: "ru" });
+if (!params.output) params = await stageParams({ minutes: MINUTES, language: LANGUAGE });
 save("params", params.output);
 console.log(
   `слов ${params.output.wordsTarget.join("–")}, кадров ${params.output.shotsTarget.join("–")}, ` +

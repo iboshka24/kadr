@@ -14,7 +14,7 @@ import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from "node
 import { join } from "node:path";
 
 import { panelSvg } from "./providers/render.js";
-import { toSrt } from "./providers/voice.js";
+import { buildAss, toSrt } from "./subtitles.js";
 
 const FPS = 30;
 const WIDTH = 1920;
@@ -79,7 +79,15 @@ function buildClip({ panel, seconds, lively, out }) {
  * @param {string} options.outDir куда складывать
  * @param {Map<number,string>} [options.rendered] готовые картинки от нейросети
  */
-export function assemble({ shots, voicePath, words, outDir, rendered = null, subtitles = true }) {
+export function assemble({
+  shots,
+  voicePath,
+  words,
+  outDir,
+  rendered = null,
+  subtitles = true,
+  assOptions = {},
+}) {
   mkdirSync(outDir, { recursive: true });
   const clipsDir = join(outDir, "clips");
   mkdirSync(clipsDir, { recursive: true });
@@ -103,8 +111,13 @@ export function assemble({ shots, voicePath, words, outDir, rendered = null, sub
   const silent = join(outDir, "video-silent.mp4");
   ffmpeg(["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", silent]);
 
+  // srt кладём рядом: некоторые площадки просят отдельный файл субтитров.
   const srtPath = join(outDir, "subtitles.srt");
   writeFileSync(srtPath, toSrt(words), "utf8");
+
+  // А в картинку прожигаем ASS с подсветкой произносимого слова.
+  const assPath = join(outDir, "subtitles.ass");
+  writeFileSync(assPath, buildAss(words, assOptions), "utf8");
 
   const final = join(outDir, "video.mp4");
   const args = ["-i", silent, "-i", voicePath];
@@ -116,11 +129,9 @@ export function assemble({ shots, voicePath, words, outDir, rendered = null, sub
 
   if (burnSubtitles) {
     // Прожигаем субтитры в картинку: так ролик одинаково выглядит везде, где его
-    // зальют, и не зависит от того, подхватит ли площадка отдельный файл.
-    const style =
-      "FontName=DejaVu Sans,FontSize=34,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000," +
-      "BorderStyle=1,Outline=2,Shadow=0,MarginV=48,Alignment=2";
-    args.push("-vf", `subtitles=${srtPath}:force_style='${style}'`);
+    // зальют, и не зависит от того, подхватит ли площадка отдельный файл. Вид,
+    // размер и подсветка заданы в самом ASS — force_style здесь не нужен.
+    args.push("-vf", `subtitles=${assPath}`);
   }
 
   args.push(
@@ -136,6 +147,7 @@ export function assemble({ shots, voicePath, words, outDir, rendered = null, sub
     silent,
     clips,
     subtitles: srtPath,
+    ass: assPath,
     durationMs,
     seconds: Math.round(durationMs / 100) / 10,
     clipsCount: clips.length,

@@ -51,16 +51,34 @@ def split_text(text: str, max_chars: int = MAX_CHARS) -> list[str]:
     return chunks
 
 
-async def try_voice(voice: str, rate: str, probe_text: str = "Проверка связи.") -> bool:
+# Проба для голоса должна быть на ЕГО языке. Сервис отвечает NoAudioReceived,
+# если язык текста не совпадает с голосом: английский голос на русской фразе
+# «Проверка связи» молчит, хотя на английской говорит. На этом я и обжёгся —
+# три английских голоса разом «оказались мёртвыми».
+PROBES = {
+    "ru": "Проверка связи.",
+    "en": "Voice check.",
+    "de": "Test der Stimme.",
+    "fr": "Vérification de la voix.",
+    "es": "Prueba de voz.",
+}
+
+
+def probe_for(voice: str) -> str:
+    return PROBES.get(voice[:2].lower(), "Voice check.")
+
+
+async def try_voice(voice: str, rate: str, probe_text: str | None = None) -> bool:
     """Отвечает ли этот голос прямо сейчас.
 
     Голоса у бесплатного сервиса живут своей жизнью: `ru-RU-DmitryNeural` в один
     день перестаёт отдавать звук и отвечает `NoAudioReceived` даже на короткую
     фразу, а через день работает снова. Падать из-за этого конвейер не должен —
-    голос проверяется короткой пробой, и берётся первый живой.
+    голос проверяется короткой пробой на своём языке, и берётся первый живой.
     """
     try:
-        comm = edge_tts.Communicate(probe_text, voice, rate=rate, boundary="WordBoundary")
+        text = probe_text or probe_for(voice)
+        comm = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
         audio = bytearray()
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
