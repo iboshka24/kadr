@@ -152,6 +152,68 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
   return out;
 }
 
+
+/**
+ * NVIDIA: тот же ключ, что рисует картинки, отвечает и текстом.
+ *
+ * Это лучший из бесплатных путей — своя квота, не общая с Gemini и Groq, и самый
+ * быстрый ответ из виденных (около полутора секунд). Доступные этому ключу модели
+ * проверены вживую; `mistral-large-2` и `nemotron-ultra-253b` ключу не выданы,
+ * `kimi-k3` отвечает минутами.
+ */
+const NVIDIA_MODELS = [
+  "deepseek-ai/deepseek-v4.1-flash",
+  "nvidia/nemotron-3-super-120b-a12b",
+  "z-ai/glm-5.3-flash",
+];
+let nvidiaModel = null;
+
+async function callNvidia({ system, user, env, json = true, temperature = 0.85 }) {
+  const key = env.NVIDIA_API_KEY || env.NVIDIA_KEY;
+  if (!key) throw new LlmUnavailable("нет ключа NVIDIA");
+
+  const candidates = nvidiaModel ? [nvidiaModel, ...NVIDIA_MODELS.filter((m) => m !== nvidiaModel)] : NVIDIA_MODELS;
+  let lastError = null;
+
+  for (const model of candidates) {
+    const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        temperature,
+        // Запас: у моделей с рассуждением часть ответа уходит в размышления, и при
+        // маленьком пределе текст приходит пустым — так и случилась первая проба.
+        max_tokens: 8000,
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
+          { role: "user", content: user },
+        ],
+      }),
+    });
+    const text = await res.text();
+
+    if (res.status === 429) throw new LlmUnavailable("NVIDIA: квота исчерпана (429)");
+    if (!res.ok) {
+      lastError = `NVIDIA ${res.status} на «${model}»: ${text.replace(/\s+/g, " ").slice(0, 160)}`;
+      continue; // модель может быть не выдана ключу — пробуем следующую
+    }
+
+    const data = JSON.parse(text);
+    const message = data?.choices?.[0]?.message ?? {};
+    const out = String(message.content ?? "");
+    if (!out.trim()) {
+      lastError = `NVIDIA «${model}»: пустой ответ (размышлений ${String(message.reasoning_content ?? "").length} знаков)`;
+      continue;
+    }
+
+    nvidiaModel = model;
+    return out;
+  }
+
+  throw new Error(lastError ?? "NVIDIA: ни одна модель не ответила");
+}
+
 /**
  * Спрашивает модель и возвращает разобранный JSON.
  *
@@ -189,6 +251,7 @@ function isCooling(name) {
 
 export async function askJson({ system, user, env = loadEnv(), json = true, temperature = 0.85, attempts = 3 }) {
   const providers = [
+    ["nvidia", callNvidia],
     ["gemini", callGemini],
     ["groq", callGroq],
   ];
