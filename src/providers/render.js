@@ -202,6 +202,77 @@ export const PROPS = {
     `fill="none" stroke="${PALETTE.ink}" stroke-width="6" />`,
 };
 
+
+/** Текст в SVG: кавычки и амперсанды в подписях ломают разметку, если их не экранировать. */
+export function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+const RED = "#d92d20";
+
+/**
+ * Красная стрелка — фирменный приём канала.
+ * Стрелка рисуется дрожащей рукой, как и всё остальное: ровная линия выбивается.
+ */
+function arrow(r, fromX, fromY, toX, toY, { color = RED, width = 7 } = {}) {
+  const shaft = wobbleLine(r, fromX, fromY, toX, toY, 2.2);
+  const length = Math.hypot(toX - fromX, toY - fromY) || 1;
+  const ux = (toX - fromX) / length;
+  const uy = (toY - fromY) / length;
+  const px = -uy;
+  const py = ux;
+  const size = 34;
+  const head =
+    `M ${(toX - ux * size + px * size * 0.55).toFixed(1)} ${(toY - uy * size + py * size * 0.55).toFixed(1)}` +
+    ` L ${toX.toFixed(1)} ${toY.toFixed(1)}` +
+    ` L ${(toX - ux * size - px * size * 0.55).toFixed(1)} ${(toY - uy * size - py * size * 0.55).toFixed(1)}`;
+
+  return (
+    `<path d="${shaft}" stroke="${color}" stroke-width="${width}" fill="none" stroke-linecap="round" />` +
+    `<path d="${head}" stroke="${color}" stroke-width="${width}" fill="none" stroke-linecap="round" stroke-linejoin="round" />`
+  );
+}
+
+/** Жирная чёрная подпись большими буквами — второй элемент того же приёма. */
+function caption(text, x, y, { size = 58 } = {}) {
+  return `<text x="${x}" y="${y}" font-family="DejaVu Sans, sans-serif" font-weight="700" font-size="${size}" fill="#111111" text-anchor="middle" letter-spacing="1">${escapeXml(String(text).toUpperCase())}</text>`;
+}
+
+/** Плашка с датой в углу кадра: выглядит как выписка из документа, держит доверие. */
+function dateStamp(text) {
+  const label = escapeXml(String(text));
+  const width = Math.max(150, 20 + String(text).length * 17);
+  return (
+    `<rect x="48" y="44" width="${width}" height="52" fill="#111111" rx="4" />` +
+    `<text x="${48 + width / 2}" y="79" font-family="DejaVu Sans, sans-serif" font-weight="700" font-size="26" fill="#ffffff" text-anchor="middle">${label}</text>`
+  );
+}
+
+/** Год, месяц с годом или «в 1950-х» — это уже факт-выписка, а не подпись. */
+const DATE_LIKE = /\b(1[0-9]{3}|20[0-9]{2})\b|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(1[89][0-9]{2}|20[0-9]{2})\b/i;
+
+/**
+ * Что добавить в кадр из слов на экране.
+ *
+ * Правило простое: короткая надпись — это подпись со стрелкой (как «CULTURE»),
+ * надпись с годом — это плашка-дата в углу (как «Nov 2021»). Один и тот же текст
+ * читается по-разному в зависимости от вида, и это ровно то, что делает канал.
+ */
+export function annotationFor(onScreen) {
+  const text = String(onScreen ?? "").trim();
+  if (!text) return { mode: "none" };
+
+  if (DATE_LIKE.test(text) && text.length <= 24) return { mode: "date", text };
+
+  const words = text.split(/\s+/).length;
+  if (text.length <= 18 && words <= 3) return { mode: "caption", text };
+  return { mode: "none" };
+}
+
 /**
  * Сцены: что рисовать, если в описании кадра есть такое-то слово.
  * Правило кадра простое — рисуется то, о чём говорит кадр.
@@ -233,11 +304,21 @@ export function panelSvg(shot, { seedBase = 17 } = {}) {
   const body = scene ? scene.draw(r) : figure(r, { pose: "stand", x: 900, y: 800, scale: 1.5 });
   const floor = wobbleLine(r, 120, 800, 1800, 800, 3.4);
 
+  // Фирменные пометки поверх сцены: подпись со стрелкой или плашка с датой.
+  const note = annotationFor(shot.onScreen);
+  let marks = "";
+  if (note.mode === "caption") {
+    marks = caption(note.text, 780, 250) + arrow(r, 800, 300, 830, 600);
+  } else if (note.mode === "date") {
+    marks = dateStamp(note.text);
+  }
+
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">` +
     `<rect width="${W}" height="${H}" fill="${PALETTE.paper}" />` +
     `<path d="${floor}" stroke="${PALETTE.gray}" stroke-width="4" fill="none" />` +
     body +
+    marks +
     "</svg>"
   );
 }
