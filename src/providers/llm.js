@@ -86,10 +86,40 @@ async function callGemini({ system, user, env, json = true, temperature = 0.85 }
   return out;
 }
 
+/**
+ * Какие модели текста этот ключ Groq действительно видит.
+ *
+ * Список моделей у Groq меняется, и зашитое имя однажды перестаёт существовать —
+ * именно так и случилось: запасной провайдер молча не работал, пока основной не
+ * упёрся в квоту. Поэтому имя не угадывается, а спрашивается у сервиса.
+ */
+const GROQ_PREFERENCE = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "allam-2-7b"];
+/** Служебные модели: распознавание речи и защита от промптов текста не пишут. */
+const GROQ_NOT_TEXT = /whisper|orpheus|guard|tts|embed/i;
+
+async function groqModels(key) {
+  const res = await fetch("https://api.groq.com/openai/v1/models", {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => ({}));
+  return (data?.data ?? []).map((m) => m?.id).filter((id) => typeof id === "string" && !GROQ_NOT_TEXT.test(id));
+}
+
+/** Первая доступная модель из списка предпочтений, иначе любая текстовая. */
+async function pickGroqModel(key, env) {
+  if (env.GROQ_MODEL_TEXT) return env.GROQ_MODEL_TEXT;
+  const available = await groqModels(key);
+  for (const preferred of GROQ_PREFERENCE) {
+    if (available.includes(preferred)) return preferred;
+  }
+  return available[0] ?? "openai/gpt-oss-20b";
+}
+
 async function callGroq({ system, user, env, json = true, temperature = 0.85 }) {
   const key = env.GROQ_API_KEY;
   if (!key) throw new LlmUnavailable("нет GROQ_API_KEY");
-  const model = env.GROQ_MODEL_TEXT || "llama-3.3-70b-versatile";
+  const model = await pickGroqModel(key, env);
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -105,7 +135,14 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
   });
   const text = await res.text();
   if (res.status === 429) throw new LlmUnavailable("Groq: квота исчерпана (429)");
-  if (!res.ok) throw new Error(`Groq ${res.status}: ${text.slice(0, 200)}`);
+  if (!res.ok) {
+    const gone = res.status === 404 && text.includes("model_not_found");
+    throw new Error(
+      gone
+        ? `Groq: модель «${model}» недоступна этому ключу. Доступны: ${(await groqModels(key)).join(", ")}`
+        : `Groq ${res.status}: ${text.slice(0, 200)}`,
+    );
+  }
   const data = JSON.parse(text);
   const out = data?.choices?.[0]?.message?.content ?? "";
   if (!out.trim()) throw new Error("Groq вернул пустой ответ");

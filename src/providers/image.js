@@ -21,6 +21,35 @@ const TIMEOUT_MS = 120_000;
 /** Панель кадра: 16:9 того же размера, что и монтаж. */
 export const PANEL = { width: 1920, height: 1080 };
 
+/**
+ * Повтор на временных сбоях.
+ *
+ * 500 и обрывы связи у генератора — обычное дело: три кадра из двадцати пяти
+ * отвалились именно так, и без повтора они остались бы нарисованными кодом, хотя
+ * через пару секунд сервер отвечает нормально. Повторяем только то, что имеет
+ * смысл повторять: 5xx, 429 и сетевые обрывы. 4xx — это про нас, а не про сервер.
+ */
+async function withRetry(attempt, { tries = 3, delays = [1500, 5000, 12000], label = "запрос" } = {}) {
+  let last;
+  for (let attemptNumber = 1; attemptNumber <= tries; attemptNumber += 1) {
+    try {
+      const result = await attempt();
+      if (result?.ok) return result;
+      // Провайдер ответил, но без картинки: повторяем только на временных кодах.
+      const temporary = /ответил 5\d\d|ответил 429|не дошло|timeout|aborted/i.test(String(result?.reason ?? ""));
+      if (!temporary || attemptNumber === tries) return result;
+      last = result;
+    } catch (error) {
+      last = { ok: false, reason: `не дошло: ${String(error?.message ?? error).slice(0, 120)}` };
+      if (attemptNumber === tries) return last;
+    }
+    const wait = delays[Math.min(attemptNumber - 1, delays.length - 1)];
+    console.warn(`  ${label}: временный сбой, повтор через ${Math.round(wait / 1000)} с`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+  return last;
+}
+
 async function fetchWithTimeout(url, options, timeoutMs = TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -173,7 +202,7 @@ export async function probeImageProviders(env) {
     ["gemini", () => generateGemini({ prompt: probe, env })],
   ]) {
     try {
-      const answer = await attempt();
+      const answer = await withRetry(attempt, { tries: 2, delays: [2000, 6000], label: `проба ${name}` });
       result[name] = { available: answer.ok, reason: answer.reason };
     } catch (err) {
       result[name] = { available: false, reason: `не дошло: ${String(err?.message ?? err).slice(0, 120)}` };
@@ -242,7 +271,10 @@ export async function collectPanels({ projectDir, shots, prompts, env, provider 
       continue;
     }
     try {
-      const answer = chosen === "nvidia" ? await generateNvidia({ prompt, env }) : await generateGemini({ prompt, env });
+      const answer = await withRetry(
+        () => (chosen === "nvidia" ? generateNvidia({ prompt, env }) : generateGemini({ prompt, env })),
+        { label: `кадр ${shot.n}` },
+      );
       if (!answer.ok) {
         failed.push({ shot: shot.n, reason: answer.reason });
         continue;
