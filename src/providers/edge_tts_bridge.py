@@ -51,6 +51,34 @@ def split_text(text: str, max_chars: int = MAX_CHARS) -> list[str]:
     return chunks
 
 
+async def try_voice(voice: str, rate: str, probe_text: str = "Проверка связи.") -> bool:
+    """Отвечает ли этот голос прямо сейчас.
+
+    Голоса у бесплатного сервиса живут своей жизнью: `ru-RU-DmitryNeural` в один
+    день перестаёт отдавать звук и отвечает `NoAudioReceived` даже на короткую
+    фразу, а через день работает снова. Падать из-за этого конвейер не должен —
+    голос проверяется короткой пробой, и берётся первый живой.
+    """
+    try:
+        comm = edge_tts.Communicate(probe_text, voice, rate=rate, boundary="WordBoundary")
+        audio = bytearray()
+        async for chunk in comm.stream():
+            if chunk["type"] == "audio":
+                audio.extend(chunk["data"])
+        return len(audio) > 0
+    except Exception:
+        return False
+
+
+async def pick_voice(candidates: list[str], rate: str) -> str:
+    for voice in candidates:
+        if not voice:
+            continue
+        if await try_voice(voice, rate):
+            return voice
+    raise SystemExit("ни один голос не отвечает: " + ", ".join(candidates))
+
+
 async def synth_chunk(text: str, voice: str, rate: str) -> tuple[bytes, list[dict]]:
     comm = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
     audio = bytearray()
@@ -69,10 +97,24 @@ async def synth_chunk(text: str, voice: str, rate: str) -> tuple[bytes, list[dic
     return bytes(audio), words
 
 
-async def synth(text: str, voice: str, rate: str, out_mp3: pathlib.Path, out_json: pathlib.Path) -> None:
+async def synth(
+    text: str,
+    voice: str,
+    rate: str,
+    out_mp3: pathlib.Path,
+    out_json: pathlib.Path,
+    fallbacks: list[str] | None = None,
+) -> None:
     chunks = split_text(text)
     if not chunks:
         raise SystemExit("текст пуст")
+
+    # Сначала убеждаемся, что голос живой: иначе первый же кусок упадёт и стадия
+    # озвучки сгорит целиком на ровном месте.
+    chosen = await pick_voice([voice, *(fallbacks or [])], rate)
+    if chosen != voice:
+        print(json.dumps({"voiceFallback": True, "requested": voice, "chosen": chosen}), flush=True)
+    voice = chosen
 
     audio = bytearray()
     words: list[dict] = []
@@ -115,6 +157,7 @@ async def synth(text: str, voice: str, rate: str, out_mp3: pathlib.Path, out_jso
                 "words": len(words),
                 "chunks": len(chunks),
                 "durationMs": offset_ms,
+                "voice": voice,
             }
         )
     )
@@ -125,6 +168,11 @@ async def main() -> None:
     parser.add_argument("--text-file", required=True)
     parser.add_argument("--voice", default="ru-RU-DmitryNeural")
     parser.add_argument("--rate", default="-3%")
+    parser.add_argument(
+        "--fallbacks",
+        default="ru-RU-SvetlanaNeural",
+        help="голоса на замену, если основной не отвечает (через запятую)",
+    )
     parser.add_argument("--out-mp3", required=True)
     parser.add_argument("--out-json", required=True)
     args = parser.parse_args()
@@ -133,7 +181,14 @@ async def main() -> None:
     if not text:
         raise SystemExit("текст пуст")
 
-    await synth(text, args.voice, args.rate, pathlib.Path(args.out_mp3), pathlib.Path(args.out_json))
+    await synth(
+        text,
+        args.voice,
+        args.rate,
+        pathlib.Path(args.out_mp3),
+        pathlib.Path(args.out_json),
+        [v.strip() for v in args.fallbacks.split(",") if v.strip()],
+    )
 
 
 asyncio.run(main())

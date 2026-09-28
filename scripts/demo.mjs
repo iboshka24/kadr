@@ -113,8 +113,10 @@ step("7. Озвучка");
 const narration = script.output.shots.map((s) => s.narration).join(" ");
 const voice = await synthesize({ text: narration, outDir: join(OUT, "voice"), voice: params.output.voice });
 console.log(
-  `звука ${(voice.audio ? "есть" : "нет")}, слов с таймингом: ${voice.words.length}, ` +
-    `длительность ${(voice.durationMs / 1000).toFixed(1)} с`,
+  `звука ${voice.audio ? "есть" : "нет"}, слов с таймингом: ${voice.words.length}, ` +
+    `длительность ${(voice.durationMs / 1000).toFixed(1)} с, ` +
+    `голос ${voice.voice}${voice.voice === params.output.voice ? "" : " (запасной — основной не отвечал)"}, ` +
+    `кусков ${voice.chunks}`,
 );
 
 const timed = alignShots(script.output.shots, voice.words);

@@ -55,6 +55,11 @@ export async function synthesize({ text, outDir, voice = "ru-RU-DmitryNeural", r
   if (!String(text ?? "").trim()) throw new VoiceError("нечего озвучивать: текст пуст");
   mkdirSync(outDir, { recursive: true });
 
+  // Запасные голоса того же языка: основной (сегодня это Дмитрий) может перестать
+  // отдавать звук, и мост возьмёт следующий живой вместо падения стадии.
+  const lang = String(voice).slice(0, 2);
+  const fallbacks = (VOICES[lang] ?? []).map((v) => v.id).filter((id) => id !== voice);
+
   const textFile = join(outDir, "voice.txt");
   const mp3 = join(outDir, "voice.mp3");
   const wordsPath = join(outDir, "words.json");
@@ -66,6 +71,9 @@ export async function synthesize({ text, outDir, voice = "ru-RU-DmitryNeural", r
     `--text-file=${textFile}`,
     `--voice=${voice}`,
     `--rate=${rate}`,
+    // Запасные голоса: выбранный голос может перестать отвечать в любой момент,
+    // и мост сам переключится на живой, а не уронит стадию.
+    `--fallbacks=${fallbacks.join(",")}`,
     `--out-mp3=${mp3}`,
     `--out-json=${wordsPath}`,
   ]);
@@ -74,7 +82,8 @@ export async function synthesize({ text, outDir, voice = "ru-RU-DmitryNeural", r
   try { meta = JSON.parse(report.split("\n").pop()); } catch { /* мост мог напечатать лишнее */ }
   const words = JSON.parse(readFileSync(wordsPath, "utf8")).words ?? [];
 
-  return { audio: mp3, wordsPath, words, durationMs: meta.durationMs ?? 0 };
+  // Возвращаем голос, который реально говорил: он мог быть подменён на запасной.
+  return { audio: mp3, wordsPath, words, durationMs: meta.durationMs ?? 0, voice: meta.voice ?? voice, chunks: meta.chunks ?? 0 };
 }
 
 /**
