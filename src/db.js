@@ -15,6 +15,7 @@ import { dirname } from "node:path";
 
 export const STAGES = [
   "transcript",
+  "ideas",
   "niche",
   "style",
   "params",

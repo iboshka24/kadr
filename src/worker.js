@@ -15,6 +15,7 @@ import { collectPanels } from "./providers/image.js";
 import { assemble, describeFilm } from "./assemble.js";
 import {
   stageTranscript,
+  stageIdeas,
   stageNiche,
   stageStyle,
   stageParams,
@@ -46,6 +47,7 @@ function contextFor(projectId) {
     style: readArtifact(projectId, "style"),
     params: readArtifact(projectId, "params"),
     concept: readArtifact(projectId, "concept"),
+    ideas: readArtifact(projectId, "ideas"),
     script: readArtifact(projectId, "script"),
     imagePrompts: readArtifact(projectId, "image_prompts"),
     transcript: readArtifact(projectId, "transcript"),
@@ -73,9 +75,19 @@ async function runStage(projectId, stage) {
       writeArtifact(projectId, "analysis", result.output);
       return result;
     }
+    case "ideas": {
+      // Тема приходит либо из проекта, либо из окружения: на входе может быть
+      // просто тема, а идеи придумывает модель.
+      const topic = ctx.project.topic || env.KADR_TOPIC;
+      if (!topic) throw new Error("нет темы: положи её в поле topic проекта или в KADR_TOPIC");
+      const result = await stageIdeas({ topic, env });
+      writeArtifact(projectId, "ideas", result.output);
+      return result;
+    }
     case "niche": {
       if (!ctx.analysis) throw new Error("сначала разбор транскрипта");
-      const idea = ctx.project.niche ? JSON.parse(ctx.project.niche) : ctx.analysis.ideas?.[0];
+      const chosen = ctx.ideas?.ideas?.[0];
+      const idea = ctx.project.niche ? JSON.parse(ctx.project.niche) : chosen ?? ctx.analysis?.ideas?.[0];
       if (!idea) throw new Error("в разборе нет ни одной идеи");
       const result = await stageNiche({ idea, analysis: ctx.analysis, env });
       writeArtifact(projectId, "concept", result.output);

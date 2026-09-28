@@ -15,6 +15,7 @@ import { synthesize, alignShots } from "../src/providers/voice.js";
 import { collectPanels } from "../src/providers/image.js";
 import { assemble, describeFilm } from "../src/assemble.js";
 import {
+  stageIdeas,
   stageStyle,
   stageParams,
   stageNiche,
@@ -48,6 +49,8 @@ const cached = (name) => {
 
 // Замысел вводим прямо здесь: транскрипта референса у нас пока нет, а проверять
 // конвейер надо на настоящем материале, а не на пустышке.
+const TOPIC = process.env.KADR_TOPIC ?? "";
+
 const idea = {
   title: process.env.KADR_IDEA_TITLE ?? "Почему пончик стоит дешевле, чем ты думаешь",
   hook: process.env.KADR_IDEA_HOOK ?? "В одном пончике сорок граммов сахара. И это не ошибка рецепта.",
@@ -57,11 +60,48 @@ const idea = {
   why: "Обыденная вещь, спрятанный механизм, чувство «мной управляли» — ядро ниши.",
 };
 
-const referenceNotes = `Референсы канала: плоская рисованная от руки графика, человечки-палочки с круглыми
-головами без лиц, толстый слегка дрожащий чёрный контур, заливки плоскими цветами без градиентов и теней,
-много белого фона и пустого места, один-два предмета в кадре, никакого текста внутри картинки.`;
+// Стиль берём из референсов канала. Мультяшный, как на присланных кадрах:
+// город и здания прямо, светлое небо, тёплые плоские цвета, а название места
+// нарисовано прямо в кадре — оно и держит ощущение конкретного города.
+const referenceNotes =
+  process.env.KADR_STYLE_NOTES ??
+  `Мультяшная рисованная графика: чистые плоские формы с тонким тёмным контуром, без градиентов и теней.
+Здания и улицы показаны прямо, как в книжке с картинками: дом с окнами, козырьком и дверью; за ним силуэты города.
+Светлое небо ровным цветом, серая мостовая, тёплые плоские заливки — кирпично-красный, горчичный, бирюзовый, кремовый.
+Персонаж простой: круглая голова, точки-глаза, простая одежда, живое лицо.
+Надписи — часть кадра: название города крупным леттерингом (как «MINNEAPOLIS»), вывески на зданиях
+(как «SOUND 80»), указатели и таблички. Текста в кадре не избегаем, он держит место действия.
+Много воздуха, ясная композиция, один сюжет на кадр.`;
 
 let style, params, concept, script, imagePrompts, videoPrompts;
+
+// Если задана только тема, идеи придумывает модель — и берём первую.
+let invented = null;
+if (TOPIC && !process.env.KADR_IDEA_TITLE) {
+  step("0. Идеи по теме (придумывает модель)");
+  const cachedIdeas = cached("ideas");
+  if (cachedIdeas) {
+    invented = cachedIdeas;
+  } else {
+    const result = await stageIdeas({ topic: TOPIC, env });
+    if (result.errors.length) console.log("замечания:", result.errors.slice(0, 3));
+    invented = result.output;
+    save("ideas", invented);
+  }
+  invented.ideas.slice(0, 8).forEach((it, i) => console.log(`  ${i + 1}. ${it.title}`));
+  const chosen = invented.ideas[Number(process.env.KADR_IDEA_INDEX ?? 0)];
+  console.log(`выбрана: ${chosen.title}`);
+  Object.assign(idea, {
+    title: chosen.title,
+    hook: chosen.hook,
+    essence: chosen.mechanism,
+    why: chosen.finalTurn,
+    mechanism: chosen.mechanism,
+    villain: chosen.villain,
+    finalTurn: chosen.finalTurn,
+    facts: chosen.facts,
+  });
+}
 
 step("1. Паспорт стиля");
 style = { output: cached("style"), errors: [], warnings: [] };
@@ -84,7 +124,11 @@ console.log(
 
 step("3. Замысел");
 concept = { output: cached("concept"), errors: [], warnings: [] };
-if (!concept.output) concept = await stageNiche({ idea, analysis: { niche: "видео-эссе со спрятанным механизмом" }, env });
+if (!concept.output) concept = await stageNiche({
+    idea: { ...idea, ...(invented?.ideas?.[Number(process.env.KADR_IDEA_INDEX ?? 0)] ?? {}) },
+    analysis: { niche: "видео-эссе со спрятанным механизмом" },
+    env,
+  });
 if (concept.errors.length) console.log("замечания:", concept.errors);
 save("concept", concept.output);
 console.log("механизм:", String(concept.output.mechanism ?? "").slice(0, 140) + "…");

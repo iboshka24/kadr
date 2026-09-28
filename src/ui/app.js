@@ -10,6 +10,7 @@ const $ = (sel) => document.querySelector(sel);
 
 const STAGE_NAMES = {
   transcript: "разбор референса",
+  ideas: "идеи",
   niche: "замысел",
   style: "паспорт стиля",
   params: "параметры",

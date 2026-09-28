@@ -12,7 +12,7 @@
  * прежним ответом.
  */
 import { askJson } from "../providers/llm.js";
-import { checkStage, planFor } from "../validate.js";
+import { checkStage, countWords, planFor } from "../validate.js";
 
 /** Общий хребет ниши: он одинаков для всех видео канала. */
 export const NICHE_DNA = `Ниша: короткие видео-эссе на 6–9 минут. Берётся обыденная вещь или привычный вопрос
@@ -88,6 +88,49 @@ Sprouts — 1,94 млн (один эксперимент — один механ
 холодный тон «тобой управляли» про бытовое (еда, тело, деньги) и разоблачение системы.
 И у всех финал — призыв подписаться; разворота на собственную жизнь зрителя нет ни у кого.`;
 
+/**
+ * Идеи по теме: модель придумывает сама, а не получает готовую.
+ *
+ * Раньше идею задавал человек, и конвейер умел только исполнять. Теперь на входе
+ * может быть просто тема — «что делали древние люди ночью» — а идеи, механизм и
+ * виноватого ищет модель, опираясь на проверенные сведения о нише ниже.
+ */
+export async function stageIdeas({ topic, env, count = 8 }) {
+  const data = await askJson({
+    env,
+    system: SYSTEM_WRITER,
+    user: `${NICHE_RESEARCH}
+
+Тема: ${topic}
+
+Придумай ${count} идей для видео по этой теме. Каждая идея — это свой спрятанный
+механизм, а не пересказ темы: у каждой должен быть виноватый или система, на которой
+кто-то выиграл, и поворот в конце, переворачивающий взгляд зрителя на его жизнь.
+
+Требования к идеям:
+- заголовок — как приговор или как обещание раскрытия, без вопросов и без «вы не поверите»;
+- хук — первая фраза видео: конкретная деталь с числом, годом или именем;
+- механизм — 2–3 предложения о том, что на самом деле происходит;
+- виноватый — кто или что на этом выигрывает;
+- поворот — чем видео заканчивается: мысль про жизнь зрителя, а не призыв подписаться;
+- факты — 3–5 проверяемых фактов, на которых держится доверие;
+- ни одна идея не повторяет другую и не повторяет перечисленные выше каналы.
+
+Верни JSON:
+{ "ideas": [ { "title": "", "hook": "", "mechanism": "", "villain": "", "finalTurn": "", "facts": [""] } ] }`,
+    temperature: 1.0,
+  });
+
+  const ideas = Array.isArray(data.ideas) ? data.ideas : [];
+  const errors = [];
+  if (ideas.length < Math.min(4, count)) errors.push(`идей мало: ${ideas.length}`);
+  for (const [index, idea] of ideas.entries()) {
+    if (!idea?.mechanism) errors.push(`идея ${index + 1}: не описан механизм`);
+    if (!idea?.finalTurn) errors.push(`идея ${index + 1}: нет поворота в конце`);
+  }
+  return { output: { topic, ideas }, errors, warnings: [] };
+}
+
 /** 2. Ниша и выбор идеи: проект фиксирует одну идею, с которой работаем. */
 export async function stageNiche({ idea, analysis, env }) {
   const data = await askJson({
@@ -99,6 +142,12 @@ export async function stageNiche({ idea, analysis, env }) {
 Идея видео: ${idea.title}
 Хук: ${idea.hook}
 Суть: ${idea.essence}
+${idea.mechanism ? `Уже найденный механизм: ${idea.mechanism}` : ""}
+${idea.villain ? `Кто на этом выигрывает: ${idea.villain}` : ""}
+${idea.finalTurn ? `Задуманный поворот в конце: ${idea.finalTurn}` : ""}
+${idea.facts?.length ? `Факты, которые надо сохранить: ${idea.facts.join("; ")}` : ""}
+
+Сохрани всё, что уже найдено выше, и дополни недостающее — не выдумывай другое.
 
 Опиши замысел точно, чтобы по нему потом писать сценарий. Верни JSON:
 {
@@ -170,6 +219,30 @@ export async function stageParams({ minutes, language = "ru" }) {
 }
 
 /**
+ * Сколько кадров заказываем у модели за один раз.
+ *
+ * Видео на пятнадцать минут — это около двухсот пятидесяти кадров. Одной выдачей
+ * такой сценарий не пишется: модель теряет середину и повторяется, а ответ не
+ * помещается в разумный предел. Поэтому длинный сценарий собирается блоками, но
+ * собирается как одно целое — блок знает свой участок и что было до него.
+ */
+const BLOCK_SHOTS = 45;
+
+/** Роль участка в общей драматургии: без этого блоки повторяют друг друга. */
+function actFor(index, total) {
+  if (index === 0) {
+    return "ЗАХОД: холодный вход с конкретной деталью — число, год, имя; сразу кейс. Вопросов зрителю не задавать.";
+  }
+  if (index === total - 1) {
+    return "ФИНАЛ: разворот на собственную жизнь зрителя. Никаких призывов подписаться, лайкать или «досмотреть до конца».";
+  }
+  const share = index / Math.max(1, total - 1);
+  if (share < 0.4) return "РАСКРЫТИЕ: следующий слой механизма, конкретика для доверия — имена, годы, суммы, названия исследований.";
+  if (share < 0.75) return "ВИНОВАТЫЙ: кто на этом выигрывает и как устроена система; одна кинематографичная сцена-эпизод.";
+  return "СГУЩЕНИЕ: каждый следующий слой хуже предыдущего, подводка к финальному развороту.";
+}
+
+/**
  * 5. Сценарий-раскадровка.
  * Единственная стадия с петлёй починки: длинное видео почти никогда не выходит с
  * первого раза, и принимать «почти по правилам» дороже, чем один раз поправить.
@@ -208,10 +281,74 @@ export async function stageScript({ concept, params, style, env, maxFixes = 2 })
   ]
 }`;
 
-  let answer = await askJson({ env, system: SYSTEM_WRITER, user: task, temperature: 0.9 });
-  let shots = normalizeShots(answer.shots);
-  let check = checkStage("script", { minutes, shots, language: params.language });
+  // Длинный сценарий — блоками. Короткий пишется целиком, как раньше.
+  const blockCount = Math.ceil(sMin / BLOCK_SHOTS);
   const history = [];
+  let shots = [];
+
+  if (blockCount > 1) {
+    const perBlockShots = Math.round(sMin / blockCount);
+    const perBlockWords = Math.round(wMin / blockCount);
+
+    for (let index = 0; index < blockCount; index += 1) {
+      const from = index * perBlockShots + 1;
+      const to = index === blockCount - 1 ? sMin : (index + 1) * perBlockShots;
+      const tail = shots.slice(-4).map((s) => `  ${s.n}. ${s.narration}`).join("\n");
+      const head = shots[0]?.narration ?? "";
+
+      const blockTask = `Пиши участок сценария-раскадровки. Это ${index + 1}-й участок из ${blockCount}
+видео длительностью ${minutes} минут, и он должен продолжать уже написанное, а не начинать заново.
+
+Что уже известно про весь фильм:
+Замысел: ${concept.title}
+Обещание зрителю: ${concept.promise}
+Спрятанный механизм: ${concept.mechanism}
+На ком зарабатывают: ${concept.villain}
+Финальный поворот, к которому всё идёт: ${concept.finalTurn}
+Факты для доверия: ${(concept.facts ?? []).join("; ")}
+${head ? `Первая фраза фильма: «${head}»` : ""}
+
+Твой участок — ${actFor(index, blockCount)}.
+
+Последние кадры предыдущего участка (продолжай с этой мысли, не повторяй её):
+${tail || "  (это начало фильма)"}
+
+Жёсткие требования к участку:
+- кадров ровно от ${to - from + 1 - 3} до ${to - from + 1 + 3}, номера начни с ${from};
+- слов в озвучке участка: около ${perBlockWords} (плюс-минус четверть);
+- один кадр — одна фраза, 8–18 слов;
+- ${Math.max(1, Math.round((animationTarget[0] / blockCount)))}–${Math.max(2, Math.round((animationTarget[1] / blockCount)))} кадров с флагом animated, и только там, где движение нужно;
+- никаких «в этом видео мы разберём», никаких списков, никаких вопросов зрителю;
+- каждое утверждение — с конкретикой: имя, год, число, название.
+
+Верни JSON:
+{
+  "shots": [
+    { "n": ${from}, "narration": "ровно то, что произносит голос за кадром",
+      "onScreen": "что видно в кадре, коротко и конкретно",
+      "animated": false,
+      "scene": "подсказка художнику: главные предметы кадра" }
+  ]
+}`;
+
+      const answer = await askJson({ env, system: SYSTEM_WRITER, user: blockTask, temperature: 0.9 });
+      const part = normalizeShots(answer.shots).map((shot) => ({ ...shot, n: shot.n + from - 1 }));
+      const blockWords = part.reduce((sum, shot) => sum + countWords(shot.narration), 0);
+      history.push({ block: index + 1, shots: part.length, words: blockWords, act: actFor(index, blockCount).split(":")[0] });
+      console.log(
+        `  участок ${index + 1}/${blockCount}: кадров ${part.length}, слов ${blockWords} (${actFor(index, blockCount).split(":")[0].toLowerCase()})`,
+      );
+      shots.push(...part);
+    }
+
+    // Нумерация после склейки: модель на стыках сбивается, а порядок обязателен.
+    shots = shots.map((shot, i) => ({ ...shot, n: i + 1 }));
+  } else {
+    const answer = await askJson({ env, system: SYSTEM_WRITER, user: task, temperature: 0.9 });
+    shots = normalizeShots(answer.shots);
+  }
+
+  let check = checkStage("script", { minutes, shots, language: params.language });
 
   for (let attempt = 1; attempt <= maxFixes && check.errors.length; attempt += 1) {
     history.push({ attempt, errors: check.errors.slice(0, 6) });
@@ -248,7 +385,9 @@ export function normalizeShots(raw) {
  * «улучшает» и перестаёт совпадать, а совпадение обязательно.
  */
 export async function stageImagePrompts({ shots, style, env, batch = 20, styleBlockSuffix }) {
-  const suffix = styleBlockSuffix ?? "16:9 horizontal composition, centered subject, plenty of white negative space";
+  const suffix =
+    styleBlockSuffix ??
+    "16:9 horizontal composition, subject centered, clear foreground and background separation";
   const all = [];
 
   for (let i = 0; i < shots.length; i += batch) {
@@ -257,8 +396,21 @@ export async function stageImagePrompts({ shots, style, env, batch = 20, styleBl
       env,
       system: `Ты пишешь промты для генератора изображений. Только английский язык, естественные
 фразы, без веса и без синтаксиса конкретного сервиса. Отвечай только JSON.`,
-      user: `Кадры видео. Для каждого напиши английский промт: сначала что и где происходит,
-потом постоянные описания героев из листа персонажей — теми же словами.
+      user: `Кадры фильма. Для каждого напиши ПОДРОБНЫЙ английский промт — связный абзац из
+4–7 предложений, а не одну фразу. Что должно быть в промте:
+
+1. план и камера: wide establishing shot / medium shot / close-up; с какой точки видно сцену;
+2. место целиком: что за здание или улица, время дня, погода, из чего сделаны стены и крыши;
+3. передний план и задний план: что стоит ближе к зрителю, что видно вдали;
+4. герой: его постоянное описание из листа персонажей — ТЕМИ ЖЕ словами — и чем он занят
+   именно в этом кадре, что у него на лице;
+5. цвета: конкретные цвета заливок для главных предметов кадра;
+6. надписи: если в кадре уместна надпись — название города, вывеска, табличка — включи её
+   В КАВЫЧКАХ дословно (например a sign reading "SOUND 80"), потому что она держит место;
+7. настроение кадра одним словом.
+
+Никаких списков и сокращений. Названия сервисов, вес слов и синтаксис одного генератора
+не упоминай.
 
 Лист персонажей:
 ${JSON.stringify(style.characterSheet ?? [], null, 1)}
@@ -266,8 +418,9 @@ ${JSON.stringify(style.characterSheet ?? [], null, 1)}
 Кадры:
 ${JSON.stringify(slice.map((s) => ({ n: s.n, onScreen: s.onScreen, scene: s.scene })), null, 1)}
 
-Верни JSON: { "prompts": [ { "shot": номер, "text": "английский промт" } ] }
-Не добавляй сам блок стиля — его допишут отдельно. Не добавляй соотношение сторон.`,
+Верни JSON: { "prompts": [ { "shot": номер, "text": "подробный английский промт абзацем" } ] }
+Не добавляй сам блок стиля — его допишут отдельно. Не добавляй соотношение сторон.
+Длина одного промта: не меньше 45 слов.`,
       temperature: 0.7,
     });
 
@@ -325,6 +478,7 @@ ${JSON.stringify(slice.map((s) => ({ n: s.n, onScreen: s.onScreen })), null, 1)}
 
 export const STAGE_FUNCTIONS = {
   transcript: stageTranscript,
+  ideas: stageIdeas,
   niche: stageNiche,
   style: stageStyle,
   params: stageParams,

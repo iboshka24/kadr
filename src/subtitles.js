@@ -24,6 +24,7 @@ function escapeAss(text) {
 
 const WHITE = "&H00FFFFFF";
 const AMBER = "&H003DA3E8"; // #E8A33D в порядке ASS (BGR)
+const BAR_BLACK = "&H26000000"; // чёрная полоса, чуть прозрачная
 
 /**
  * Группирует слова в короткие строки.
@@ -79,7 +80,11 @@ export function buildAss(words, options = {}) {
     uppercase = false,
     maxWords = 4,
     maxChars = 30,
-    marginBottom = 130,
+    marginBottom = 118,
+    // Полоса под текст. В примерах канала субтитры стоят на сплошной чёрной
+    // полосе, а не висят на картинке: так они читаются на любом фоне.
+    bar = true,
+    barHeight = 96,
   } = options;
 
   const header = `[Script Info]
@@ -92,14 +97,30 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,${font},${fontSize},${WHITE},${WHITE},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,60,60,${marginBottom},1
+Style: Caption,${font},${fontSize},${WHITE},${WHITE},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,2,60,60,${marginBottom},1
+Style: Bar,${font},20,&H00000000,&H00000000,${BAR_BLACK},${BAR_BLACK},0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
 
   if (!Array.isArray(words) || words.length === 0) return `${header}\n`;
 
+  const lastWord = words[words.length - 1];
+  const lastMs = lastWord.startMs + Math.max(lastWord.durMs ?? 0, 500);
+
   const lines = [];
+
+  // Полоса: одно событие на весь ролик, нарисованное прямоугольником. Именно
+  // поэтому она ровная — если рисовать её под каждым текстом, ширина прыгала бы
+  // вместе с длиной строки. Полоса чуть шире текста и не двигается.
+  if (bar) {
+    const barTop = 1080 - marginBottom - Math.round(fontSize * 0.62) - 18;
+    const height = barHeight;
+    const drawn =
+      `{\\an7\\pos(0,${barTop})\\p1}m 0 0 l 1920 0 l 1920 ${height} l 0 ${height}{\\p0}`;
+    lines.push(`Dialogue: 0,${assTime(0)},${assTime(lastMs)},Bar,,0,0,0,,${drawn}`);
+  }
+
   for (const group of groupWords(words, { maxWords, maxChars })) {
     const wordsInGroup = group.map((w) => (uppercase ? String(w.word).toUpperCase() : w.word));
 
@@ -115,7 +136,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         .map((w, i) => (i === index ? `{\\c${AMBER}}${escapeAss(w)}{\\c${WHITE}}` : escapeAss(w)))
         .join(" ");
 
-      lines.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Caption,,0,0,0,,${text}`);
+      // Слой 1 — текст поверх полосы (слой 0).
+      lines.push(`Dialogue: 1,${assTime(start)},${assTime(end)},Caption,,0,0,0,,${text}`);
     });
   }
 

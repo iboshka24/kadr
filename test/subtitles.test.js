@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 
 import { groupWords, buildAss, toSrt } from "../src/subtitles.js";
 
+/** Только события текста: первым в файле идёт событие полосы. */
+const textEvents = (ass) =>
+  ass.split("\n").filter((line) => line.startsWith("Dialogue: 1,"));
+
 const words = [
   { word: "Посмотри", startMs: 0, durMs: 500 },
   { word: "на", startMs: 500, durMs: 200 },
@@ -28,7 +32,7 @@ test("строка не длиннее заданного числа знако�
 
 test("подсветка: на каждое слово группы — своё событие", () => {
   const ass = buildAss(words, { maxWords: 4 });
-  const events = ass.split("\n").filter((line) => line.startsWith("Dialogue:"));
+  const events = textEvents(ass);
   assert.equal(events.length, words.length, "событий столько же, сколько слов");
 
   // Первое событие подсвечивает первое слово и гасит следующее.
@@ -42,8 +46,7 @@ test("подсветка: на каждое слово группы — своё
 
 test("подсветка перескакивает в момент начала слова, без дырок", () => {
   const ass = buildAss(words, { maxWords: 4 });
-  const events = ass.split("\n").filter((line) => line.startsWith("Dialogue:"));
-  const starts = events.map((e) => e.split(",")[1]);
+  const starts = textEvents(ass).map((e) => e.split(",")[1]);
   assert.equal(starts[0], "0:00:00.00");
   // Каждое событие начинается там, где начинается его слово.
   assert.equal(starts[1], "0:00:00.50");
@@ -52,7 +55,7 @@ test("подсветка перескакивает в момент начала
 
 test("служебные знаки ASS экранируются", () => {
   const ass = buildAss([{ word: "a{b}c\\d", startMs: 0, durMs: 400 }]);
-  const event = ass.split("\n").find((l) => l.startsWith("Dialogue:"));
+  const event = textEvents(ass)[0];
   assert.ok(event.includes("\\{b\\}"), "фигурные скобки не остаются служебными");
 });
 
@@ -61,4 +64,28 @@ test("без слов файл всё равно корректный", () => {
   assert.ok(ass.includes("[Events]"));
   assert.equal(ass.split("\n").filter((l) => l.startsWith("Dialogue:")).length, 0);
   assert.equal(toSrt([]), "");
+});
+
+test("полоса одна на весь ролик и не двигается вместе со строкой", () => {
+  const ass = buildAss(words, { maxWords: 4 });
+  const bars = ass.split("\n").filter((l) => l.startsWith("Dialogue: 0,"));
+  assert.equal(bars.length, 1, "полоса должна быть ровно одна на весь ролик, а не под каждой строкой");
+
+  // Полоса начинается с нуля и тянется до последнего слова.
+  const [, start, end] = bars[0].split(",");
+  assert.equal(start, "0:00:00.00");
+  const last = words[words.length - 1];
+  const expected = Math.round((last.startMs + last.durMs) / 10);
+  const actual = Number(end.split(":")[2].replace(".", ""));
+  assert.ok(Math.abs(actual - expected) < 60, "полоса кончается там же, где речь");
+
+  // Рисуется прямоугольником на всю ширину кадра — отсюда и постоянная ширина.
+  assert.ok(bars[0].includes("l 1920 0"), "полоса нарисована во всю ширину");
+});
+
+test("текст лежит поверх полосы, а не под ней", () => {
+  const ass = buildAss(words, { maxWords: 4 });
+  const barLayer = Number(ass.split("\n").find((l) => l.startsWith("Dialogue: 0,")).split(",")[0].split(" ")[1]);
+  const textLayers = textEvents(ass).map((l) => Number(l.split(",")[0].split(" ")[1]));
+  assert.ok(textLayers.every((layer) => layer > barLayer), "текст обязан быть выше полосы");
 });
