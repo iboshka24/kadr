@@ -109,7 +109,12 @@ export function assemble({ shots, voicePath, words, outDir, rendered = null, sub
   const final = join(outDir, "video.mp4");
   const args = ["-i", silent, "-i", voicePath];
 
-  if (subtitles) {
+  // Субтитры прожигаем только если есть тайминги слов. С пустым списком .srt
+  // получается пустым файлом, и ffmpeg отказывается его открывать — сборка
+  // падала на ровном месте при монтаже без озвученных слов.
+  const burnSubtitles = Boolean(subtitles) && Array.isArray(words) && words.length > 0;
+
+  if (burnSubtitles) {
     // Прожигаем субтитры в картинку: так ролик одинаково выглядит везде, где его
     // зальют, и не зависит от того, подхватит ли площадка отдельный файл.
     const style =
