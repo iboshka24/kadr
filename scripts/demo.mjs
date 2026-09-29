@@ -144,7 +144,7 @@ console.log("механизм:", String(concept.output.mechanism ?? "").slice(0,
 
 step("4. Сценарий");
 script = { output: cached("script"), errors: [], warnings: [] };
-if (!script.output) script = await stageScript({ concept: concept.output, params: params.output, style: style.output, env });
+if (!script.output) script = await stageScript({ concept: concept.output, params: params.output, style: style.output, env, projectDir: OUT });
 save("script", script.output);
 console.log("кадров:", script.output.shots.length, "| слов:", script.output.stats.words);
 console.log("анимаций:", script.output.stats.animated);

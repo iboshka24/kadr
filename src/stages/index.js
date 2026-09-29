@@ -12,6 +12,8 @@
  * прежним ответом.
  */
 import { askJson } from "../providers/llm.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { checkStage, countWords, planFor } from "../validate.js";
 
 /** Общий хребет ниши: он одинаков для всех видео канала. */
@@ -259,7 +261,7 @@ function actFor(index, total) {
  * Единственная стадия с петлёй починки: длинное видео почти никогда не выходит с
  * первого раза, и принимать «почти по правилам» дороже, чем один раз поправить.
  */
-export async function stageScript({ concept, params, style, env, maxFixes = 2 }) {
+export async function stageScript({ concept, params, style, env, maxFixes = 2, projectDir = null }) {
   const { minutes, wordsTarget, shotsTarget, animationTarget } = params;
   const [wMin, wMax] = wordsTarget;
   const [sMin, sMax] = shotsTarget;
@@ -343,6 +345,21 @@ ${tail || "  (это начало фильма)"}
   ]
 }`;
 
+      // Готовый участок сразу ложится на диск и берётся оттуда при повторе.
+      // Длинный сценарий пишется сорок минут, и обрыв на последнем участке не
+      // должен отправлять в корзину всю работу — она уже оплачена ожиданием.
+      const blockPath = projectDir ? join(projectDir, "script-blocks", `block-${String(index + 1).padStart(2, "0")}.json`) : null;
+      if (blockPath && !env.KADR_FORCE && existsSync(blockPath)) {
+        const saved = JSON.parse(readFileSync(blockPath, "utf8"));
+        const restored = normalizeShots(saved.shots).map((shot, i) => ({ ...shot, n: from + i }));
+        if (restored.length) {
+          shots.push(...restored);
+          history.push({ block: index + 1, shots: restored.length, words: saved.words ?? 0, act: actFor(index, blockCount).split(":")[0], fromDisk: true });
+          console.log(`  участок ${index + 1}/${blockCount}: взят готовый с диска (кадров ${restored.length})`);
+          continue;
+        }
+      }
+
       // Пауза перед участком: у бесплатного тарифа минутный предел, и без
       // передышки следующий участок упирается в него же.
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, 6000));
@@ -376,6 +393,11 @@ ${tailNow}
 
       part = part.slice(0, wanted).map((shot, i) => ({ ...shot, n: from + i }));
       const blockWords = part.reduce((sum, shot) => sum + countWords(shot.narration), 0);
+
+      if (blockPath && part.length) {
+        mkdirSync(dirname(blockPath), { recursive: true });
+        writeFileSync(blockPath, JSON.stringify({ block: index + 1, words: blockWords, act: actFor(index, blockCount).split(":")[0], shots: part }, null, 1), "utf8");
+      }
       history.push({ block: index + 1, shots: part.length, words: blockWords, act: actFor(index, blockCount).split(":")[0] });
       console.log(
         `  участок ${index + 1}/${blockCount}: кадров ${part.length}, слов ${blockWords} (${actFor(index, blockCount).split(":")[0].toLowerCase()})`,

@@ -29,6 +29,55 @@ export class LlmUnavailable extends Error {}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Вытаскивает JSON из ответа модели: она любит обернуть его в ```json. */
+/**
+ * Спасает недозакрытый JSON.
+ *
+ * Модель иногда обрывает ответ на полуслове: строки обрезаны по пределу ответа,
+ * скобки не закрыты. Раньше это роняло весь длинный прогон на последнем участке.
+ * Здесь мы аккуратно достраиваем то, что можно: отрезаем незавершённый хвост,
+ * закрываем кавычки и скобки и пробуем разобрать снова. Спасать стоит только
+ * целые объекты внутри массива — лучше меньше кадров, чем ни одного.
+ */
+export function salvageJson(text) {
+  let s = String(text).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
+  for (let cut = 0; cut < 40; cut += 1) {
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+    let ok = true;
+
+    for (const ch of s) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{" || ch === "[") stack.push(ch);
+      else if (ch === "}" || ch === "]") {
+        const need = ch === "}" ? "{" : "[";
+        if (stack.pop() !== need) { ok = false; break; }
+      }
+    }
+
+    let candidate = s;
+    if (inString) candidate += '"';
+    // отрезаем незавершённый хвост объекта, если он оборван запятой или именем поля
+    candidate = candidate.replace(/,\s*"[^"]*"?\s*:?\s*$/, "").replace(/,\s*$/, "");
+    while (stack.length) {
+      candidate += stack.pop() === "{" ? "}" : "]";
+    }
+
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      if (!ok) break;
+      s = s.slice(0, Math.max(0, s.lastIndexOf(",", s.length - 2)));
+      if (!s) break;
+    }
+  }
+  return null;
+}
+
 export function extractJson(text) {
   const raw = String(text ?? "").trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -184,7 +233,7 @@ async function callNvidia({ system, user, env, json = true, temperature = 0.85 }
         temperature,
         // Запас: у моделей с рассуждением часть ответа уходит в размышления, и при
         // маленьком пределе текст приходит пустым — так и случилась первая проба.
-        max_tokens: 8000,
+        max_tokens: 16000,
         messages: [
           ...(system ? [{ role: "system", content: system }] : []),
           { role: "user", content: user },
@@ -268,7 +317,18 @@ export async function askJson({ system, user, env = loadEnv(), json = true, temp
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
         const text = await call({ system, user, env, json, temperature });
-        return json ? extractJson(text) : text;
+        if (!json) return text;
+        try {
+          return extractJson(text);
+        } catch (err) {
+          // Ответ обрезан: достраиваем скобки и берём то, что успело прийти.
+          const saved = salvageJson(text);
+          if (saved) {
+            console.log(`  ${name}: ответ обрезан, спасено ${Array.isArray(saved?.shots) ? saved.shots.length + " кадров" : "часть ответа"}`);
+            return saved;
+          }
+          throw err;
+        }
       } catch (err) {
         const message = String(err?.message ?? err);
         const quota = err instanceof LlmUnavailable || /квота|429/.test(message);
