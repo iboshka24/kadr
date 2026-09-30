@@ -237,8 +237,9 @@ export async function collectPanels({ projectDir, shots, prompts, env, provider 
   if (!missing.length) return { rendered, drawn: [], failed: [], provider: "inbox", reasons: [] };
 
   // Выбираем провайдера: явно указанный или первый доступный.
+  const promptFor = new Map((prompts ?? []).map((p) => [p.shot, p.text]));
   const probe = provider === "auto" ? await probeImageProviders(env) : {};
-  const chosen =
+  let chosen =
     provider !== "auto"
       ? provider
       : probe.nvidia?.available
@@ -251,13 +252,37 @@ export async function collectPanels({ projectDir, shots, prompts, env, provider 
     .filter(([, info]) => !info.available)
     .map(([name, info]) => `${name}: ${info.reason}`);
 
+  // Проба — советчик, а не приговор. У NVIDIA 403 «Authorization failed» приходит и
+  // разово (ключом в ту же минуту идут десятки запросов), а решает она судьбу всех
+  // двухсот двадцати пяти кадров сразу: из-за одного отказатого запроса фильм уходил
+  // в запасной слой и рисовался кодом. Поэтому перед отказом пробуем нарисовать
+  // первый настоящий кадр.
+  if (chosen === "none") {
+    for (const candidate of ["nvidia", "gemini"]) {
+      const first = missing.find((shot) => promptFor.get(shot.n));
+      if (!first) break;
+      try {
+        const attempt =
+          candidate === "nvidia"
+            ? await generateNvidia({ prompt: promptFor.get(first.n), env })
+            : await generateGemini({ prompt: promptFor.get(first.n), env });
+        if (attempt.ok) {
+          chosen = candidate;
+          log(`${candidate}: проба не прошла, но первый кадр нарисовался — рисуем им`);
+          break;
+        }
+      } catch {
+        /* следующий кандидат */
+      }
+    }
+  }
+
   if (chosen === "none") {
     log(`внешние провайдеры не могут рисовать — кадры останутся нарисованными кодом`);
     for (const reason of reasons) log(`  ${reason}`);
     return { rendered, drawn: missing.map((s) => s.n), failed: [], provider: "none", reasons };
   }
 
-  const promptFor = new Map((prompts ?? []).map((p) => [p.shot, p.text]));
   const dir = join(projectDir, "images");
   mkdirSync(dir, { recursive: true });
 
