@@ -264,31 +264,50 @@ export async function collectPanels({ projectDir, shots, prompts, env, provider 
   const drawn = [];
   const failed = [];
 
-  for (const shot of missing) {
-    const prompt = promptFor.get(shot.n);
-    if (!prompt) {
+  const queue = missing.filter((shot) => {
+    if (!promptFor.get(shot.n)) {
       failed.push({ shot: shot.n, reason: "нет промта" });
-      continue;
+      return false;
     }
-    try {
-      const answer = await withRetry(
-        () => (chosen === "nvidia" ? generateNvidia({ prompt, env }) : generateGemini({ prompt, env })),
-        { label: `кадр ${shot.n}` },
-      );
-      if (!answer.ok) {
-        failed.push({ shot: shot.n, reason: answer.reason });
-        continue;
+    return true;
+  });
+
+  // Рисование — это почти целиком ожидание сети. Двести двадцать пять кадров по одному
+  // в очереди занимают десятки минут, хотя сервис принимает несколько запросов разом.
+  // Кадры независимы: у каждого свой промт, свой файл и свой номер.
+  const atOnce = Math.max(
+    1,
+    Math.min(Number(env?.KADR_IMAGE_CONCURRENCY ?? process.env.KADR_IMAGE_CONCURRENCY ?? 3), queue.length || 1),
+  );
+  let cursor = 0;
+  const drawShot = async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= queue.length) return;
+      const shot = queue[index];
+      const prompt = promptFor.get(shot.n);
+      try {
+        const answer = await withRetry(
+          () => (chosen === "nvidia" ? generateNvidia({ prompt, env }) : generateGemini({ prompt, env })),
+          { label: `кадр ${shot.n}` },
+        );
+        if (!answer.ok) {
+          failed.push({ shot: shot.n, reason: answer.reason });
+          continue;
+        }
+        const bytes = Buffer.from(answer.base64, "base64");
+        const file = join(dir, `${String(shot.n).padStart(4, "0")}${imageExtension(bytes)}`);
+        writeFileSync(file, bytes);
+        rendered.set(shot.n, file);
+        drawn.push(shot.n);
+        log(`  кадр ${shot.n} — ${chosen}`);
+      } catch (err) {
+        failed.push({ shot: shot.n, reason: String(err?.message ?? err).slice(0, 160) });
       }
-      const bytes = Buffer.from(answer.base64, "base64");
-      const file = join(dir, `${String(shot.n).padStart(4, "0")}${imageExtension(bytes)}`);
-      writeFileSync(file, bytes);
-      rendered.set(shot.n, file);
-      drawn.push(shot.n);
-      log(`  кадр ${shot.n} — ${chosen}`);
-    } catch (err) {
-      failed.push({ shot: shot.n, reason: String(err?.message ?? err).slice(0, 160) });
     }
-  }
+  };
+
+  await Promise.all(Array.from({ length: atOnce }, drawShot));
 
   if (failed.length) {
     log(`не вышло на ${failed.length} кадрах, первый: ${failed[0].reason}`);
