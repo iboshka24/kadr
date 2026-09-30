@@ -470,29 +470,38 @@ export async function stageImagePrompts({ shots, style, env, batch = 20, styleBl
     "16:9 horizontal composition, subject centered, clear foreground and background separation";
   const all = [];
 
-  for (let i = 0; i < shots.length; i += batch) {
-    const slice = shots.slice(i, i + batch);
-    const partNumber = Math.floor(i / batch) + 1;
-    const partCount = Math.ceil(shots.length / batch);
-    // Двенадцать участков по двадцать промтов пишутся десятками минут. Без этой строки
-    // стадия неотличима от зависания, а без сохранения на диск сбой на последнем участке
-    // уносит всю работу — та же болезнь, что была у длинного сценария.
-    const t0 = Date.now();
-    const partPath = projectDir
-      ? join(projectDir, "image-prompt-parts", `part-${String(partNumber).padStart(2, "0")}.json`)
-      : null;
-    let data = null;
-    if (partPath && existsSync(partPath)) {
-      try {
-        data = JSON.parse(readFileSync(partPath, "utf8"));
-        console.log(`  промты ${partNumber}/${partCount}: взят готовый с диска (${data.prompts?.length ?? 0} шт)`);
-      } catch {
-        data = null;
+  // Участки независимы: у каждого свой кусок кадров, свой файл на диске и свой номер в
+  // итоговом списке (он всё равно сортируется по номеру кадра). Один участок занимает
+  // около восьми минут — три ждут сеть, — и последовательный обход девятнадцати участков
+  // растягивает стадию на часы, хотя предел здесь не процессор, а ожидание ответа.
+  const parts = [];
+  for (let i = 0; i < shots.length; i += batch) parts.push(shots.slice(i, i + batch));
+  const partCount = parts.length;
+  const PARTS_AT_ONCE = Math.max(1, Math.min(Number(process.env.KADR_PROMPT_PARTS ?? 3), partCount));
+
+  let nextPart = 0;
+  const runPart = async () => {
+    for (;;) {
+      const index = nextPart++;
+      if (index >= partCount) return;
+      const slice = parts[index];
+      const partNumber = index + 1;
+      const t0 = Date.now();
+      const partPath = projectDir
+        ? join(projectDir, "image-prompt-parts", `part-${String(partNumber).padStart(2, "0")}.json`)
+        : null;
+      let data = null;
+      if (partPath && existsSync(partPath)) {
+        try {
+          data = JSON.parse(readFileSync(partPath, "utf8"));
+          console.log(`  промты ${partNumber}/${partCount}: взят готовый с диска (${data.prompts?.length ?? 0} шт)`);
+        } catch {
+          data = null;
+        }
       }
-    }
-    if (!data) {
-      console.log(`  промты ${partNumber}/${partCount}: кадры ${slice[0].n}–${slice[slice.length - 1].n}`);
-      data = await askJson({
+      if (!data) {
+        console.log(`  промты ${partNumber}/${partCount}: кадры ${slice[0].n}–${slice[slice.length - 1].n}`);
+        data = await askJson({
       env,
       system: `Ты пишешь промты для генератора изображений. Только английский язык, естественные
 фразы, без веса и без синтаксиса конкретного сервиса. Отвечай только JSON.`,
@@ -543,7 +552,10 @@ ${JSON.stringify(slice.map((s) => ({ n: s.n, onScreen: s.onScreen, scene: s.scen
       if (!Number.isFinite(shot)) continue;
       all.push({ shot, text: `${String(p.text).trim()} ${style.styleBlock} ${suffix}`.trim() });
     }
-  }
+    }
+  };
+
+  await Promise.all(Array.from({ length: PARTS_AT_ONCE }, runPart));
 
   const sorted = all.sort((a, b) => a.shot - b.shot);
   const check = checkStage("image_prompts", { shots, prompts: sorted, styleBlock: style.styleBlock });
