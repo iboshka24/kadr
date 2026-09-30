@@ -299,6 +299,9 @@ export async function stageScript({ concept, params, style, env, maxFixes = 2, p
   const blockCount = Math.ceil(sMin / BLOCK_SHOTS);
   const history = [];
   let shots = [];
+  // Объявлено здесь, а не в ветке: на длинном видео ветка «один заход» не выполняется,
+  // а цикл исправлений ниже всё равно обращается к ответу модели (был ReferenceError).
+  let answer;
 
   if (blockCount > 1) {
     const perBlockShots = Math.round(sMin / blockCount);
@@ -408,13 +411,15 @@ ${tailNow}
     // Нумерация после склейки: модель на стыках сбивается, а порядок обязателен.
     shots = shots.map((shot, i) => ({ ...shot, n: i + 1 }));
   } else {
-    const answer = await askJson({ env, system: SYSTEM_WRITER, user: task, temperature: 0.9 });
+    answer = await askJson({ env, system: SYSTEM_WRITER, user: task, temperature: 0.9 });
     shots = normalizeShots(answer.shots);
   }
 
   let check = checkStage("script", { minutes, shots, language: params.language });
 
   for (let attempt = 1; attempt <= maxFixes && check.errors.length; attempt += 1) {
+    // Иначе лог после участков выглядит мёртвым, и непонятно, идёт работа или прогон встал.
+    console.log(`  проверка сценария: замечаний ${check.errors.length}, исправление ${attempt}/${maxFixes}`);
     history.push({ attempt, errors: check.errors.slice(0, 6) });
     const fixRequest = `${task}
 
@@ -425,7 +430,18 @@ ${check.errors.map((e) => `- ${e}`).join("\n")}
 ${JSON.stringify({ shots }, null, 0).slice(0, 24000)}`;
 
     answer = await askJson({ env, system: SYSTEM_WRITER, user: fixRequest, temperature: 0.7 });
-    shots = normalizeShots(answer.shots);
+    const repaired = normalizeShots(answer.shots);
+    // Ответ «исправь весь сценарий» почти всегда приходит урезанным (16000 токенов на 225
+    // кадров не хватает), а salvage спасает начало. Если принять его как есть, готовый
+    // сценарий на 225 кадров молча заменяется огрызком на 4 кадра — и прогон уходит
+    // не к видео, а к пустому сценарию. Поэтому укорачивать сценарий запрещено.
+    if (repaired.length >= shots.length) {
+      shots = repaired.map((shot, i) => ({ ...shot, n: i + 1 }));
+    } else {
+      console.log(
+        `  исправление отброшено: ответ короче сценария (${repaired.length} кадров против ${shots.length}) — прежний сценарий сохранён`,
+      );
+    }
     check = checkStage("script", { minutes, shots, language: params.language });
   }
 

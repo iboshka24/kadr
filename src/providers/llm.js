@@ -28,6 +28,22 @@ export class LlmUnavailable extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Без явного предела мёртвое соединение держит прогон вечно: процесс жив, CPU 0 %,
+// в логе тишина — и задача «по расписанию» выглядит как «ничего не делает». Поэтому
+// каждый запрос к модели ограничен по времени (у картинок такой предел был, у текста нет).
+const LLM_TIMEOUT_MS = Number(process.env.KADR_LLM_TIMEOUT_MS ?? 150_000);
+const MODELS_TIMEOUT_MS = 20_000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = LLM_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Вытаскивает JSON из ответа модели: она любит обернуть его в ```json. */
 /**
  * Спасает недозакрытый JSON.
@@ -110,7 +126,7 @@ async function callGemini({ system, user, env, json = true, temperature = 0.85 }
   const key = env.GEMINI_API_KEY;
   if (!key) throw new LlmUnavailable("нет GEMINI_API_KEY");
   const model = env.GEMINI_MODEL_TEXT || "gemini-2.5-flash";
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
@@ -147,7 +163,7 @@ const GROQ_PREFERENCE = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen
 const GROQ_NOT_TEXT = /whisper|orpheus|guard|tts|embed/i;
 
 async function groqModels(key) {
-  const res = await fetch("https://api.groq.com/openai/v1/models", {
+  const res = await fetchWithTimeout("https://api.groq.com/openai/v1/models", {
     headers: { Authorization: `Bearer ${key}` },
   });
   if (!res.ok) return [];
@@ -169,7 +185,7 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
   const key = env.GROQ_API_KEY;
   if (!key) throw new LlmUnavailable("нет GROQ_API_KEY");
   const model = await pickGroqModel(key, env);
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -225,7 +241,7 @@ async function callNvidia({ system, user, env, json = true, temperature = 0.85 }
   let lastError = null;
 
   for (const model of candidates) {
-    const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+    const res = await fetchWithTimeout("https://integrate.api.nvidia.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
