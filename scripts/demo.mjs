@@ -152,7 +152,7 @@ console.log("замечания проверки:", script.errors.length ? scrip
 
 step("5. Промты картинок");
 imagePrompts = { output: cached("image_prompts"), errors: [], warnings: [] };
-if (!imagePrompts.output) imagePrompts = await stageImagePrompts({ shots: script.output.shots, style: style.output, env, batch: 12 });
+if (!imagePrompts.output) imagePrompts = await stageImagePrompts({ shots: script.output.shots, style: style.output, env, batch: 12, projectDir: OUT });
 save("image_prompts", imagePrompts.output);
 console.log("промтов:", imagePrompts.output.prompts.length, "| нарушения:", imagePrompts.errors.slice(0, 3));
 

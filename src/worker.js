@@ -129,7 +129,7 @@ async function runStage(projectId, stage) {
     }
     case "image_prompts": {
       if (!ctx.script || !ctx.style) throw new Error("нужен сценарий и паспорт стиля");
-      const result = await stageImagePrompts({ shots: ctx.script.shots, style: ctx.style, env });
+      const result = await stageImagePrompts({ shots: ctx.script.shots, style: ctx.style, env, projectDir: join(PROJECTS, projectId) });
       writeArtifact(projectId, "image_prompts", result.output);
       return result;
     }

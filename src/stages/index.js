@@ -464,7 +464,7 @@ export function normalizeShots(raw) {
  * 6. Промты к картинкам. Блок стиля приклеивается кодом, а не моделью: она его
  * «улучшает» и перестаёт совпадать, а совпадение обязательно.
  */
-export async function stageImagePrompts({ shots, style, env, batch = 20, styleBlockSuffix }) {
+export async function stageImagePrompts({ shots, style, env, batch = 20, styleBlockSuffix, projectDir = null }) {
   const suffix =
     styleBlockSuffix ??
     "16:9 horizontal composition, subject centered, clear foreground and background separation";
@@ -472,7 +472,27 @@ export async function stageImagePrompts({ shots, style, env, batch = 20, styleBl
 
   for (let i = 0; i < shots.length; i += batch) {
     const slice = shots.slice(i, i + batch);
-    const data = await askJson({
+    const partNumber = Math.floor(i / batch) + 1;
+    const partCount = Math.ceil(shots.length / batch);
+    // Двенадцать участков по двадцать промтов пишутся десятками минут. Без этой строки
+    // стадия неотличима от зависания, а без сохранения на диск сбой на последнем участке
+    // уносит всю работу — та же болезнь, что была у длинного сценария.
+    const t0 = Date.now();
+    const partPath = projectDir
+      ? join(projectDir, "image-prompt-parts", `part-${String(partNumber).padStart(2, "0")}.json`)
+      : null;
+    let data = null;
+    if (partPath && existsSync(partPath)) {
+      try {
+        data = JSON.parse(readFileSync(partPath, "utf8"));
+        console.log(`  промты ${partNumber}/${partCount}: взят готовый с диска (${data.prompts?.length ?? 0} шт)`);
+      } catch {
+        data = null;
+      }
+    }
+    if (!data) {
+      console.log(`  промты ${partNumber}/${partCount}: кадры ${slice[0].n}–${slice[slice.length - 1].n}`);
+      data = await askJson({
       env,
       system: `Ты пишешь промты для генератора изображений. Только английский язык, естественные
 фразы, без веса и без синтаксиса конкретного сервиса. Отвечай только JSON.`,
@@ -507,7 +527,16 @@ ${JSON.stringify(slice.map((s) => ({ n: s.n, onScreen: s.onScreen, scene: s.scen
 Не добавляй сам блок стиля — его допишут отдельно. Не добавляй соотношение сторон.
 Длина одного промта: не меньше 45 слов.`,
       temperature: 0.7,
-    });
+      });
+
+      if (partPath && Array.isArray(data?.prompts) && data.prompts.length) {
+        mkdirSync(dirname(partPath), { recursive: true });
+        writeFileSync(partPath, JSON.stringify(data), "utf8");
+      }
+      console.log(
+        `  промты ${partNumber}/${partCount}: получено ${data?.prompts?.length ?? 0} шт за ${Math.round((Date.now() - t0) / 1000)} с`,
+      );
+    }
 
     for (const p of data.prompts ?? []) {
       const shot = Number(p.shot);
