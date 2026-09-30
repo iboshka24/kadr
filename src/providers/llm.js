@@ -226,11 +226,16 @@ async function callGroq({ system, user, env, json = true, temperature = 0.85 }) 
  * проверены вживую; `mistral-large-2` и `nemotron-ultra-253b` ключу не выданы,
  * `kimi-k3` отвечает минутами.
  */
+// Порядок — по замеру на живой задаче (участок сценария на 19 кадров, оба отдали
+// полный участок): nemotron-3-super-120b — 49 с, deepseek-v4.1-flash — 112 с.
+// Модель из списка кэшируется после первого успеха, поэтому первая в списке и
+// определяет скорость всего прогона: часы на сценарии и промтах.
+// KADR_NVIDIA_MODEL перебивает выбор, если нужна другая.
 const NVIDIA_MODELS = [
+  process.env.KADR_NVIDIA_MODEL || "nvidia/nemotron-3-super-120b-a12b",
   "deepseek-ai/deepseek-v4.1-flash",
-  "nvidia/nemotron-3-super-120b-a12b",
   "z-ai/glm-5.3-flash",
-];
+].filter((model, index, all) => model && all.indexOf(model) === index);
 let nvidiaModel = null;
 
 async function callNvidia({ system, user, env, json = true, temperature = 0.85 }) {
