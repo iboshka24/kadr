@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync } from "
 import { join } from "node:path";
 
 import { loadEnv, providersAvailable } from "../src/providers/llm.js";
-import { languageOf } from "../src/validate.js";
+import { sameLanguage } from "../src/validate.js";
 import { synthesize, alignShots } from "../src/providers/voice.js";
 import { collectPanels } from "../src/providers/image.js";
 import { assemble, describeFilm } from "../src/assemble.js";
@@ -148,7 +148,7 @@ step("4. Сценарий");
 // проходит дальше и всплывает только на озвучке, через полтора часа прогона.
 const cachedScript = cached("script");
 const cachedScriptFits =
-  cachedScript && languageOf(cachedScript.shots?.map((s) => s.narration).join(" ")) === languageOf(params.output.language);
+  cachedScript && sameLanguage(cachedScript.shots?.map((s) => s.narration).join(" "), params.output.language);
 if (cachedScript && !cachedScriptFits) {
   console.log(`на диске сценарий другого языка (нужен «${params.output.language}») — пишу заново`);
   // Производное от старого сценария тоже не годится: промты к картинкам и анимациям

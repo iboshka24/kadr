@@ -14,7 +14,7 @@
 import { askJson } from "../providers/llm.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { checkStage, countWords, languageOf, planFor } from "../validate.js";
+import { checkStage, countWords, planFor, sameLanguage } from "../validate.js";
 
 /** Общий хребет ниши: он одинаков для всех видео канала. */
 export const NICHE_DNA = `Ниша: короткие видео-эссе на 6–9 минут. Берётся обыденная вещь или привычный вопрос
@@ -371,7 +371,7 @@ ${tail || "  (это начало фильма)"}
         // приходит русский текст, английский голос его не озвучивает, и стадия
         // озвучки падает через полтора часа после начала прогона.
         const wrongLanguage =
-          restored.length > 0 && languageOf(restored.map((s) => s.narration).join(" ")) !== languageOf(requestedLanguage);
+          restored.length > 0 && !sameLanguage(restored.map((s) => s.narration).join(" "), requestedLanguage);
         if (restored.length && !wrongLanguage) {
           shots.push(...restored);
           history.push({ block: index + 1, shots: restored.length, words: saved.words ?? 0, act: actFor(index, blockCount).split(":")[0], fromDisk: true });

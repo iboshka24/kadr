@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   countWords,
   languageOf,
+  sameLanguage,
   planFor,
   validateScript,
   validateImagePrompts,
@@ -229,4 +230,16 @@ test("язык текста определяется по письменност
   assert.equal(languageOf("42"), "unknown");
   assert.equal(languageOf("Привет, мир! Hello."), "ru", "перевес по знакам решает");
   assert.equal(languageOf("Hello there, friend!"), "en");
+});
+
+test("язык текста сверяется с кодом проекта, а не с языком кода", () => {
+  // Эта петля стоила дорого: languageOf("en") — две латинские буквы, то есть
+  // «unknown», поэтому любой текст считался чужим и каждый перезапуск переписывал
+  // все двенадцать участков сценария заново.
+  assert.equal(sameLanguage("In 2012 Berger proved that fire burned.", "en"), true);
+  assert.equal(sameLanguage("В 2012 году Бергер доказал, что огонь горел.", "en"), false);
+  assert.equal(sameLanguage("В 2012 году Бергер доказал, что огонь горел.", "ru"), true);
+  assert.equal(sameLanguage("In 2012 Berger proved.", "ru"), false);
+  assert.equal(sameLanguage("", "en"), true, "неизвестный язык — не повод переписывать");
+  assert.equal(sameLanguage("42", "en"), true);
 });
