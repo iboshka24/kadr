@@ -7,10 +7,11 @@
  * уложился в несколько минут. Восьмиминутное видео считается этим же кодом, там
  * просто больше кадров.
  */
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadEnv, providersAvailable } from "../src/providers/llm.js";
+import { languageOf } from "../src/validate.js";
 import { synthesize, alignShots } from "../src/providers/voice.js";
 import { collectPanels } from "../src/providers/image.js";
 import { assemble, describeFilm } from "../src/assemble.js";
@@ -143,7 +144,26 @@ save("concept", concept.output);
 console.log("механизм:", String(concept.output.mechanism ?? "").slice(0, 140) + "…");
 
 step("4. Сценарий");
-script = { output: cached("script"), errors: [], warnings: [] };
+// Кэш сценария тоже проверяем на язык: русский script.json при английском проекте
+// проходит дальше и всплывает только на озвучке, через полтора часа прогона.
+const cachedScript = cached("script");
+const cachedScriptFits =
+  cachedScript && languageOf(cachedScript.shots?.map((s) => s.narration).join(" ")) === languageOf(params.output.language);
+if (cachedScript && !cachedScriptFits) {
+  console.log(`на диске сценарий другого языка (нужен «${params.output.language}») — пишу заново`);
+  // Производное от старого сценария тоже не годится: промты к картинкам и анимациям
+  // описывают прежние кадры, а нарисованные панели им соответствуют. Убираем в
+  // сторону, а не удаляем — прежняя работа остаётся на диске.
+  for (const name of ["image_prompts.json", "video_prompts.json", "film.json", "timed_shots.json"]) {
+    const file = join(OUT, name);
+    if (existsSync(file)) renameSync(file, `${file}.other-language`);
+  }
+  for (const dir of ["image-prompt-parts", "images", "voice", "video"]) {
+    const stale = join(OUT, dir);
+    if (existsSync(stale)) renameSync(stale, `${stale}.other-language`);
+  }
+}
+script = { output: cachedScriptFits ? cachedScript : null, errors: [], warnings: [] };
 if (!script.output) script = await stageScript({ concept: concept.output, params: params.output, style: style.output, env, projectDir: OUT });
 save("script", script.output);
 console.log("кадров:", script.output.shots.length, "| слов:", script.output.stats.words);

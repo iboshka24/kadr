@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   countWords,
+  languageOf,
   planFor,
   validateScript,
   validateImagePrompts,
@@ -217,4 +218,15 @@ test("общий заход без конкретики поднимает пр�
     checked.warnings.some((w) => w.includes("конкретики")),
     "заход без числа и имени должен давать предупреждение",
   );
+});
+
+test("язык текста определяется по письменности, а не по флагу проекта", () => {
+  // На этом ловится тихая поломка: английский проект брал с диска русский сценарий,
+  // английский голос его не озвучивал, и стадия озвучки падала через полтора часа.
+  assert.equal(languageOf("В 2012 году Бергер доказал: в пещере горел огонь."), "ru");
+  assert.equal(languageOf("In 2012 Berger proved that fire burned in the cave."), "en");
+  assert.equal(languageOf(""), "unknown", "пустой текст — не повод объявлять язык");
+  assert.equal(languageOf("42"), "unknown");
+  assert.equal(languageOf("Привет, мир! Hello."), "ru", "перевес по знакам решает");
+  assert.equal(languageOf("Hello there, friend!"), "en");
 });

@@ -14,7 +14,7 @@
 import { askJson } from "../providers/llm.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { checkStage, countWords, planFor } from "../validate.js";
+import { checkStage, countWords, languageOf, planFor } from "../validate.js";
 
 /** Общий хребет ниши: он одинаков для всех видео канала. */
 export const NICHE_DNA = `Ниша: короткие видео-эссе на 6–9 минут. Берётся обыденная вещь или привычный вопрос
@@ -263,6 +263,7 @@ function actFor(index, total) {
  */
 export async function stageScript({ concept, params, style, env, maxFixes = 2, projectDir = null }) {
   const { minutes, wordsTarget, shotsTarget, animationTarget } = params;
+  const requestedLanguage = params.language ?? "ru";
   const [wMin, wMax] = wordsTarget;
   const [sMin, sMax] = shotsTarget;
 
@@ -355,11 +356,22 @@ ${tail || "  (это начало фильма)"}
       if (blockPath && !env.KADR_FORCE && existsSync(blockPath)) {
         const saved = JSON.parse(readFileSync(blockPath, "utf8"));
         const restored = normalizeShots(saved.shots).map((shot, i) => ({ ...shot, n: from + i }));
-        if (restored.length) {
+        // Участок с диска берётся только если он написан на нужном языке. Иначе
+        // получается тихая поломка: проект просит английский ролик, с диска
+        // приходит русский текст, английский голос его не озвучивает, и стадия
+        // озвучки падает через полтора часа после начала прогона.
+        const wrongLanguage =
+          restored.length > 0 && languageOf(restored.map((s) => s.narration).join(" ")) !== languageOf(requestedLanguage);
+        if (restored.length && !wrongLanguage) {
           shots.push(...restored);
           history.push({ block: index + 1, shots: restored.length, words: saved.words ?? 0, act: actFor(index, blockCount).split(":")[0], fromDisk: true });
           console.log(`  участок ${index + 1}/${blockCount}: взят готовый с диска (кадров ${restored.length})`);
           continue;
+        }
+        if (wrongLanguage) {
+          console.log(
+            `  участок ${index + 1}/${blockCount}: на диске текст другого языка (нужен «${requestedLanguage}») — пишу заново`,
+          );
         }
       }
 

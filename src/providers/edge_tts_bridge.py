@@ -115,6 +115,66 @@ async def synth_chunk(text: str, voice: str, rate: str) -> tuple[bytes, list[dic
     return bytes(audio), words
 
 
+def _cut_point(text: str) -> int:
+    """Где разрезать кусок, который сервис refused целиком."""
+    middle = len(text) // 2
+    for marks, window in ((".!?…", 240), (",;:", 160)):
+        best = -1
+        for mark in marks:
+            pos = text.rfind(mark, max(1, middle - window), middle + window)
+            if pos > best:
+                best = pos
+        if best > 0:
+            return best + 1
+    space = text.find(" ", middle)
+    return space + 1 if space > 0 else middle
+
+
+def _shift(words: list[dict], offset_ms: int) -> list[dict]:
+    return [
+        {"word": w["word"], "startMs": w["startMs"] + offset_ms, "durMs": w["durMs"]}
+        for w in words
+    ]
+
+
+async def synth_chunk_safe(text: str, voice: str, rate: str, depth: int = 0) -> tuple[bytes, list[dict]]:
+    """Озвучивает кусок, не сдаваясь с первого раза.
+
+    Проба голоса ничего не гарантирует: сервис отвечает живым голосом, а потом
+    молчит на отдельной фразе (`NoAudioReceived`), и раньше это роняло стадию
+    целиком уже после проверки. Поэтому кусок сначала повторяется, а если молчит
+    упорно — режется пополам по границе предложения: половина проходит там, где
+    целое не проходит. Тайминги половин сдвигаются друг за другом, как и на
+    верхнем уровне.
+    """
+    for attempt in range(1, 4):
+        try:
+            piece, words = await synth_chunk(text, voice, rate)
+            if piece:
+                return piece, words
+        except Exception:
+            pass
+        await asyncio.sleep(1.2 * attempt)
+
+    if depth < 3 and len(text) > 200:
+        cut = _cut_point(text)
+        audio = bytearray()
+        words: list[dict] = []
+        offset_ms = 0
+        for half in (text[:cut], text[cut:]):
+            if not half.strip():
+                continue
+            piece, piece_words = await synth_chunk_safe(half, voice, rate, depth + 1)
+            audio.extend(piece)
+            words.extend(_shift(piece_words, offset_ms))
+            if piece_words:
+                offset_ms += piece_words[-1]["startMs"] + piece_words[-1]["durMs"] + 120
+        if audio:
+            return bytes(audio), words
+
+    raise SystemExit(f"кусок молчит даже по частям: «{text[:60]}…»")
+
+
 async def synth(
     text: str,
     voice: str,
@@ -139,7 +199,7 @@ async def synth(
     offset_ms = 0
 
     for index, chunk in enumerate(chunks, start=1):
-        piece, piece_words = await synth_chunk(chunk, voice, rate)
+        piece, piece_words = await synth_chunk_safe(chunk, voice, rate)
         if not piece:
             raise SystemExit(f"кусок {index} вернулся без звука: «{chunk[:60]}…»")
 
