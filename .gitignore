@@ -12,3 +12,7 @@ projects/
 # Служебное
 node_modules/
 .kadr-probe/
+
+# Артефакты питона
+__pycache__/
+*.pyc
