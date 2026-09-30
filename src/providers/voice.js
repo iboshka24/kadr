@@ -94,18 +94,40 @@ export function alignShots(shots, words) {
   if (!words.length) return shots.map((s) => ({ ...s, startMs: 0, endMs: 0 }));
   const wordCount = (text) => String(text ?? "").trim().split(/\s+/).filter(Boolean).length;
 
-  let cursor = 0;
-  let end = words[words.length - 1].startMs + words[words.length - 1].durMs;
+  const counts = shots.map((shot) => Math.max(1, wordCount(shot.narration)));
+  const total = counts.reduce((sum, n) => sum + n, 0);
+  const last = words[words.length - 1];
+  const durationMs = last.startMs + last.durMs;
 
+  // Таймингов приходит меньше, чем слов в сценарии: сервис не отдаёт границы для
+  // чисел и знаков (на живом ролике — 2748 против 2814). Прежний счёт «взять ровно
+  // столько слов, сколько в кадре» уводил курсор за конец списка, и последние кадры
+  // получали начало 0 и конец всего фильма: один кадр растягивался на двадцать минут
+  // и рисовался в 4K. Поэтому, когда таймингов не хватило, место кадра берётся по
+  // доле сказанного, а не по абсолютному счёту слов, — так ошибка не накапливается.
+  let cursor = 0;
+  let cum = 0;
+  let previousEnd = 0;
   return shots.map((shot, index) => {
-    const take = wordCount(shot.narration);
+    const take = counts[index];
     const slice = words.slice(cursor, cursor + take);
+    cum += take;
     cursor += take;
-    const startMs = index === 0 ? 0 : (words[cursor - take]?.startMs ?? 0);
-    const nextStart = words[cursor]?.startMs ?? end;
-    const endMs = Math.max(startMs + 400, nextStart || end);
+
+    const shareStart = Math.round((durationMs * (cum - take)) / total);
+    const shareEnd = Math.round((durationMs * cum) / total);
+
+    // Начало не может уйти назад: у кадра с таймингами оно берётся из речи, а у кадра
+    // без таймингов — из доли сказанного, и эти две оценки расходятся. Без этой
+    // поправки кадр начинался раньше конца предыдущего, и клипы накладывались.
+    const candidateStart = index === 0 ? 0 : (slice[0]?.startMs ?? shareStart);
+    const startMs = Math.max(candidateStart, previousEnd);
+    const nextStart = words[cursor]?.startMs ?? shareEnd;
+    const endMs = Math.max(startMs + 400, Math.min(nextStart || shareEnd, durationMs));
+    previousEnd = endMs;
     // Последнему кадру отдаём всё оставшееся время: иначе он обрывает видео.
-    return { ...shot, startMs, endMs: index === shots.length - 1 ? Math.max(endMs, end) : endMs, words: slice };
+    const lastEnd = index === shots.length - 1 ? Math.max(endMs, durationMs) : endMs;
+    return { ...shot, startMs, endMs: lastEnd, words: slice };
   });
 }
 

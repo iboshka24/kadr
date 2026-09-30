@@ -98,12 +98,20 @@ export function assemble({
   if (!usable.length) throw new Error("нет кадров с корректными таймингами — сначала озвучка");
 
   const clips = [];
+  // Предел на длину клипа: кадр длиннее полуминуты — это не режиссура, а сбитый
+  // тайминг (однажды так рисовался один кадр на двадцать минут в 4K). Лучше
+  // обрезать реплику, чем получить неверный фильм ценой получаса ожидания.
+  const MAX_CLIP_SECONDS = 30;
+  let clamped = 0;
   for (const shot of usable) {
-    const seconds = Math.max(0.6, (shot.endMs - shot.startMs) / 1000);
+    const raw = (shot.endMs - shot.startMs) / 1000;
+    const seconds = Math.max(0.6, Math.min(raw, MAX_CLIP_SECONDS));
+    if (raw > MAX_CLIP_SECONDS) clamped += 1;
     const panel = panelPathFor({ shot, panelsDir, rendered });
     const out = join(clipsDir, `clip-${String(shot.n).padStart(4, "0")}.mp4`);
     clips.push(buildClip({ panel, seconds, lively: Boolean(shot.animated), out }));
   }
+  if (clamped) console.log(`  сборка: у ${clamped} кадров тайминг был сбит и обрезан до ${MAX_CLIP_SECONDS} с`);
 
   const listFile = join(clipsDir, "list.txt");
   writeFileSync(listFile, clips.map((c) => `file '${c}'`).join("\n"), "utf8");
