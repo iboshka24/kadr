@@ -23,7 +23,11 @@ function escapeAss(text) {
 }
 
 const WHITE = "&H00FFFFFF";
-const AMBER = "&H003DA3E8"; // #E8A33D в порядке ASS (BGR)
+const BLACK = "&H00000000";
+// Подсветка произносимого слова — красный канала (та же краска, что у стрелок в кадре).
+// Янтарь здесь не годится: на белой бумаге #E8A33D даёт контраст около 2:1, и
+// подсвеченное слово пропадает. Красный #D62828 читается и на бумаге, и на синеве.
+const ACCENT = "&H002828D6";
 const BAR_BLACK = "&H26000000"; // чёрная полоса, чуть прозрачная
 
 /**
@@ -81,11 +85,21 @@ export function buildAss(words, options = {}) {
     maxWords = 4,
     maxChars = 30,
     marginBottom = 118,
-    // Полоса под текст. В примерах канала субтитры стоят на сплошной чёрной
-    // полосе, а не висят на картинке: так они читаются на любом фоне.
-    bar = true,
+    // Полоса под текст выключена. На кадрах канала половина площади — белая бумага
+    // (картинки приходят квадратными и дописываются белым полем), и сплошная чёрная
+    // полоса на белом читалась как чужая плашка, а не как часть кадра. Вместо полосы
+    // у текста теперь настоящая обводка: чёрные буквы с белым контуром видны и на
+    // бумаге, и на ночной синеве. Полосу можно вернуть опцией bar: true — тогда
+    // буквы снова белые, как было задумано для тёмного фона.
+    bar = false,
     barHeight = 96,
+    outline = 4,
   } = options;
+
+  const fill = bar ? WHITE : BLACK;
+  const edge = bar ? BLACK : WHITE;
+  const outlineWidth = bar ? 0 : outline;
+  const shadow = bar ? 0 : 2;
 
   const header = `[Script Info]
 ; Субтитры с подсветкой произносимого слова. Собрано конвейером kadr.
@@ -97,7 +111,7 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,${font},${fontSize},${WHITE},${WHITE},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,2,60,60,${marginBottom},1
+Style: Caption,${font},${fontSize},${fill},${fill},${edge},&H80000000,-1,0,0,0,100,100,0,0,1,${outlineWidth},${shadow},2,60,60,${marginBottom},1
 Style: Bar,${font},20,&H00000000,&H00000000,${BAR_BLACK},${BAR_BLACK},0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
@@ -133,7 +147,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         : word.startMs + Math.max(word.durMs ?? 0, 120);
 
       const text = wordsInGroup
-        .map((w, i) => (i === index ? `{\\c${AMBER}}${escapeAss(w)}{\\c${WHITE}}` : escapeAss(w)))
+        .map((w, i) => (i === index ? `{\\c${ACCENT}}${escapeAss(w)}{\\c${fill}}` : escapeAss(w)))
         .join(" ");
 
       // Слой 1 — текст поверх полосы (слой 0).

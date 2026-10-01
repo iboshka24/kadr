@@ -37,10 +37,10 @@ test("подсветка: на каждое слово группы — своё
 
   // Первое событие подсвечивает первое слово и гасит следующее.
   assert.ok(events[0].includes("Посмотри"), "первое слово попало в текст");
-  assert.ok(events[0].indexOf("&H003DA3E8") < events[0].indexOf("на"), "подсветка стоит на первом слове");
+  assert.ok(events[0].indexOf("&H002828D6") < events[0].indexOf("на"), "подсветка стоит на первом слове");
 
   // Второе событие — подсветка уже на втором слове.
-  const second = events[1].indexOf("&H003DA3E8");
+  const second = events[1].indexOf("&H002828D6");
   assert.ok(second > 0 && events[1].slice(second).includes("на"), "подсветка перешла на второе слово");
 });
 
@@ -66,8 +66,23 @@ test("без слов файл всё равно корректный", () => {
   assert.equal(toSrt([]), "");
 });
 
-test("полоса одна на весь ролик и не двигается вместе со строкой", () => {
+test("по умолчанию полосы под текстом нет, а буквы видно за счёт обводки", () => {
+  // На кадрах канала половина площади — белая бумага, и сплошная чёрная полоса на
+  // белом выглядела чужой плашкой. Поэтому фон убран, а читаемость держит обводка:
+  // чёрные буквы с белым контуром видно и на бумаге, и на ночной синеве.
   const ass = buildAss(words, { maxWords: 4 });
+  const bars = ass.split("\n").filter((l) => l.startsWith("Dialogue: 0,"));
+  assert.equal(bars.length, 0, "полосы быть не должно");
+
+  const caption = ass.split("\n").find((l) => l.startsWith("Style: Caption"));
+  const fields = caption.split(",");
+  assert.equal(fields[3], "&H00000000", "буквы чёрные");
+  assert.equal(fields[5], "&H00FFFFFF", "обводка белая");
+  assert.ok(Number(fields[16]) >= 3, "обводка должна быть заметной");
+});
+
+test("полосу можно вернуть: тогда она одна на весь ролик и буквы белые", () => {
+  const ass = buildAss(words, { maxWords: 4, bar: true });
   const bars = ass.split("\n").filter((l) => l.startsWith("Dialogue: 0,"));
   assert.equal(bars.length, 1, "полоса должна быть ровно одна на весь ролик, а не под каждой строкой");
 
@@ -81,10 +96,13 @@ test("полоса одна на весь ролик и не двигается 
 
   // Рисуется прямоугольником на всю ширину кадра — отсюда и постоянная ширина.
   assert.ok(bars[0].includes("l 1920 0"), "полоса нарисована во всю ширину");
+
+  const caption = ass.split("\n").find((l) => l.startsWith("Style: Caption"));
+  assert.equal(caption.split(",")[3], "&H00FFFFFF", "на тёмной полосе буквы белые");
 });
 
 test("текст лежит поверх полосы, а не под ней", () => {
-  const ass = buildAss(words, { maxWords: 4 });
+  const ass = buildAss(words, { maxWords: 4, bar: true });
   const barLayer = Number(ass.split("\n").find((l) => l.startsWith("Dialogue: 0,")).split(",")[0].split(" ")[1]);
   const textLayers = textEvents(ass).map((l) => Number(l.split(",")[0].split(" ")[1]));
   assert.ok(textLayers.every((layer) => layer > barLayer), "текст обязан быть выше полосы");
