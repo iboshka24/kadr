@@ -40,6 +40,36 @@ function panelPathFor({ shot, panelsDir, rendered }) {
 }
 
 /**
+ * Настоящий размер картинки — по её первым байтам.
+ *
+ * Нужен, чтобы отличить широкий кадр от квадратного: широкий заполняет кадр
+ * целиком, квадратный приходится добивать полем. По имени файла этого не
+ * узнать — нейросеть отдаёт JPEG, и лежать он может под любым расширением.
+ */
+export function panelSize(path) {
+  try {
+    const buf = readFileSync(path);
+    if (buf[0] === 0x89 && buf[1] === 0x50) return [buf.readUInt32BE(16), buf.readUInt32BE(20)];
+    if (buf[0] === 0xff && buf[1] === 0xd8) {
+      let i = 2;
+      while (i < buf.length - 9) {
+        if (buf[i] !== 0xff) {
+          i++;
+          continue;
+        }
+        const marker = buf[i + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc)
+          return [buf.readUInt16BE(i + 7), buf.readUInt16BE(i + 5)];
+        i += 2 + buf.readUInt16BE(i + 2);
+      }
+    }
+  } catch {
+    /* не прочитать — считаем квадратной и добиваем полем, как раньше */
+  }
+  return null;
+}
+
+/**
  * Один кадр → клип нужной длины с медленным движением.
  * @param {number} seconds  сколько секунд держится кадр
  * @param {boolean} lively  кадр с флагом анимации — движение чуть заметнее
@@ -50,12 +80,23 @@ function buildClip({ panel, seconds, lively, out }) {
   // начинает «плыть», что для рисованной от руки картинки выглядит браком.
   const zoomTo = lively ? 1.085 : 1.045;
   const step = (zoomTo - 1) / frames;
+
+  // Широкую картинку вписываем по большей стороне и срезаем лишнее: кадр
+  // заполняется целиком, полей нет. Квадратную (старые картинки, рисунок кодом)
+  // вписываем целиком и добиваем цветом бумаги — растянуть её нельзя, а срезать
+  // значит потерять половину.
+  //
+  // Допуск 3.5%: ровно 16:9 у рисующей модели не заказать. В её списках
+  // разрешённых размеров (ширина 768…1344, высота 768…960) точной пары 16:9 нет
+  // вовсе, ближайшая и самая крупная — 1344×768, это 7:4, то есть на 2.8% уже
+  // кадра. Такой кадр заполняет экран целиком, срезая около процента по высоте.
+  const size = panelSize(panel);
+  const wide = size ? Math.abs(size[0] / size[1] - 16 / 9) < 0.035 : false;
   const filter = [
-    // Вписываем, а не растягиваем: картинка от нейросети приходит квадратной
-    // (1024×1024), и растягивание в 16:9 превратило бы человечка в приплюснутого.
-    // Лишнее поле закрашиваем цветом бумаги — он совпадает с фоном панелей.
-    `scale=${WIDTH * 2}:${HEIGHT * 2}:force_original_aspect_ratio=decrease:flags=lanczos`,
-    `pad=${WIDTH * 2}:${HEIGHT * 2}:(ow-iw)/2:(oh-ih)/2:color=0xFFFFFF`,
+    `scale=${WIDTH * 2}:${HEIGHT * 2}:force_original_aspect_ratio=${wide ? "increase" : "decrease"}:flags=lanczos`,
+    wide
+      ? `crop=${WIDTH * 2}:${HEIGHT * 2}`
+      : `pad=${WIDTH * 2}:${HEIGHT * 2}:(ow-iw)/2:(oh-ih)/2:color=0xFFFFFF`,
     `zoompan=z='min(zoom+${step.toFixed(6)},${zoomTo})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${WIDTH}x${HEIGHT}:fps=${FPS}`,
     "format=yuv420p",
   ].join(",");

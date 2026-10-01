@@ -22,6 +22,18 @@ const TIMEOUT_MS = 120_000;
 export const PANEL = { width: 1920, height: 1080 };
 
 /**
+ * Размер картинки, который просим у рисующей модели: широкий, как сам кадр.
+ *
+ * Точное 16:9 у этой модели не заказать: ширина допускается 768, 832, 896, 960,
+ * 1024, 1088, 1152, 1216, 1280 или 1344, высота — 768, 832, 896 или 960, и
+ * точной пары 16:9 среди них нет вовсе. Ближайшая и самая крупная — эта:
+ * 1344×768, то есть 7:4, на 2.8% уже кадра. Сборка принимает её за широкую и
+ * срезает около процента по высоте. Просить квадрат нельзя: его потом
+ * приходится добивать полем, и по бокам кадра встают белые столбы.
+ */
+export const FRAME = { width: 1344, height: 768 };
+
+/**
  * Повтор на временных сбоях.
  *
  * 500 и обрывы связи у генератора — обычное дело: три кадра из двадцати пяти
@@ -93,11 +105,11 @@ export function inboxReport({ projectDir, shots }) {
 // ── NVIDIA ────────────────────────────────────────────────────────────────────
 
 /**
- * NVIDIA рисует FLUX-ом на отдельном хосте и ждёт МИНИМАЛЬНОЕ тело: только
- * `prompt`. Лишние поля сервер отвергает (`ratio` — «Extra inputs are not
- * permitted», `cfg_scale` — только ≤ 0), а имя модели пишется с точкой
- * (`flux.1-dev`), не с подчёркиванием. Обжёгся на обоих: сначала получил 404 от
- * неверного имени и решил, что генерации нет вообще.
+ * NVIDIA рисует FLUX-ом на отдельном хосте. Имя модели пишется с точкой
+ * (`flux.1-dev`), не с подчёркиванием — на неверном имени приходит 404, и легко
+ * решить, что генерации нет вообще. Поля размера — `width` и `height` (списки
+ * допустимых значений в `FRAME`), поля `aspect_ratio` и `cfg_scale` сервер не
+ * знает: «Extra inputs are not permitted».
  *
  * Ответ приходит как base64 в `artifacts[0].base64`, причём внутри JPEG, а не
  * PNG — поэтому формат определяется по содержимому, а не по имени поля.
@@ -107,15 +119,33 @@ export async function generateNvidia({ prompt, env, extra = {} }) {
   if (!key) return { ok: false, reason: "нет NVIDIA_API_KEY" };
 
   const url = "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev";
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt, ...extra }),
-  });
+
+  // Кадр просим сразу широким. FLUX принимает width/height, но не любое число:
+  // ширина — 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280 или 1344, высота —
+  // 768, 832, 896 или 960. Ровно 16:9 из этих списков складывается только одно:
+  // 1344×768. Поле `aspect_ratio` сервер не знает вовсе («Extra inputs are not
+  // permitted»), поэтому пропорция задаётся размером.
+  //
+  // Раньше картинки приходили квадратными, и сборка добивала их белым полем до
+  // 1920×1080 — на кадре это читалось как белые столбы по бокам.
+  const send = (body) =>
+    fetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+  let response = await send({ prompt, ...FRAME, ...extra });
+
+  // Если сервер отверг именно размер — повторяем без него. Кадр тогда придёт
+  // квадратным, и сборка добьёт его полем: некрасиво, но ролик соберётся.
+  if (response.status === 422) {
+    response = await send({ prompt, ...extra });
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -158,15 +188,27 @@ export async function generateGemini({ prompt, env }) {
   if (!key) return { ok: false, reason: "нет GEMINI_API_KEY" };
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`;
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      // Просим именно картинку: без этого модель отвечает текстом.
-      generationConfig: { responseModalities: ["IMAGE"] },
-    }),
-  });
+
+  // Кадр просим сразу широким — по той же причине, что и у NVIDIA: квадратный
+  // потом приходится добивать полем, и на кадре встают белые столбы. Модели,
+  // которые поля `imageConfig` не знают, отвечают ошибкой — тогда повторяем без
+  // него и довольствуемся тем, что дадут.
+  const send = (aspectRatio) =>
+    fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        // Просим именно картинку: без этого модель отвечает текстом.
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          ...(aspectRatio ? { imageConfig: { aspectRatio } } : {}),
+        },
+      }),
+    });
+
+  let response = await send("16:9");
+  if (response.status === 400 || response.status === 422) response = await send(null);
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
