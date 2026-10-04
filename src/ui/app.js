@@ -230,37 +230,50 @@ $("#shots").addEventListener("click", async (event) => {
 
 /* Правка одного кадра моделью: иначе поправить реплику можно только прогоном всей
    стадии сценария. Сервер принимает ответ только целиком и говорит, что устарело. */
+let editing = false;
+
 $("#shots").addEventListener("click", async (event) => {
   const button = event.target.closest(".rewrite");
   if (!button || !current) return;
   const card = button.closest(".shot");
+  const shotNumber = card.dataset.n;
   const note = card.querySelector(".edit-note");
   const field = button.dataset.field === "onScreen" ? "onScreen" : "narration";
 
   button.disabled = true;
   note.textContent = "модель думает…";
+  editing = true;
   try {
     const result = await api(
-      `/api/projects/${encodeURIComponent(current)}/shots/${encodeURIComponent(card.dataset.n)}/rewrite`,
+      `/api/projects/${encodeURIComponent(current)}/shots/${encodeURIComponent(shotNumber)}/rewrite`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instruction: card.querySelector(".instruction").value, field }),
       },
     );
-    if (result.changed) {
-      card.querySelector(".narration").textContent = result.shot.narration;
-      card.querySelector(".onscreen").textContent = result.shot.onScreen;
-      note.textContent = result.rejected.length
-        ? `принято не всё — ${result.rejected.join("; ")}`
-        : "готово · промты, озвучка и монтаж теперь устарели";
-      await refresh();
-    } else {
+
+    if (!result.changed) {
       note.textContent = `не принято — ${result.rejected.join("; ") || "модель не изменила текст"}`;
+      return;
+    }
+
+    const text = result.rejected.length
+      ? `принято не всё — ${result.rejected.join("; ")}`
+      : "готово · промты, озвучка и монтаж теперь устарели";
+
+    /* Обновляем список (стадии должны перестать показывать «готово»), но ответ
+       пишем уже в новую карточку: перерисовка стирает старую. */
+    await refresh();
+    const fresh = document.querySelector(`.shot[data-n="${CSS.escape(shotNumber)}"]`);
+    if (fresh) {
+      fresh.querySelector(".edit").open = true;
+      fresh.querySelector(".edit-note").textContent = text;
     }
   } catch (err) {
     note.textContent = err.message;
   } finally {
+    editing = false;
     button.disabled = false;
   }
 });
@@ -269,9 +282,11 @@ $("#filter").addEventListener("input", async () => {
   if (current) renderShots(await api(`/api/projects/${encodeURIComponent(current)}`));
 });
 
-// Обновляем состояние, пока идёт работа: очередь двигается на сервере.
+/* Обновляем состояние, пока идёт работа: очередь двигается на сервере. Но не тогда,
+   когда человек правит кадр или читает ответ: перерисовка стирает и задание, и ответ. */
 setInterval(() => {
-  if (current) refresh().catch(() => {});
+  if (!current || editing || document.querySelector(".shot .edit[open]")) return;
+  refresh().catch(() => {});
 }, 4000);
 
 await loadCommon();
