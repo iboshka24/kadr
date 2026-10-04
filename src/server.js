@@ -7,15 +7,16 @@
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, renameSync } from "node:fs";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { openDb, createProject, getProject, listProjects, allStageRuns, enqueue, queueDepth, assetsOf, STAGES, setProject, markStage } from "./db.js";
-import { loadEnv, providersAvailable } from "./providers/llm.js";
+import { loadEnv, providersAvailable, askJson } from "./providers/llm.js";
 import { VOICES } from "./providers/voice.js";
 import { panelSvg } from "./providers/render.js";
 import { adoptProjectsFromDisk, stageDone } from "./adopt.js";
+import { rewriteTask, applyRewrite, staleStages } from "./edit.js";
 import { PROJECTS } from "./paths.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,12 @@ const PORT = Number(process.env.PORT || 4173);
 
 const db = openDb(join(PROJECTS, "kadr.db"));
 const env = loadEnv();
+
+/* Сверка с диском — один раз при старте, а не только на запросе списка: иначе
+   свежий процесс отвечает «проект не найден» на правку кадра и на запуск стадии,
+   хотя проект лежит на диске целым. */
+const adoptedAtStart = adoptProjectsFromDisk(db, PROJECTS);
+if (adoptedAtStart) console.log(`kadr: завёл с диска проектов — ${adoptedAtStart}`);
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -52,6 +59,28 @@ const stageArtifact = (projectId, stage) => {
     return null;
   }
 };
+
+/**
+ * Записывает сценарий так, чтобы обрыв не стоил работы.
+ *
+ * Правка одного кадра переписывает script.json — файл, из которого собран готовый
+ * фильм. Пишем через временный файл и переименование (половина сценария на диске
+ * хуже, чем несохранённая правка) и оставляем два отката: `script.json.bak` — то,
+ * что было до первой правки в студии, `script.json.prev` — состояние до этой.
+ */
+function writeScript(dir, script) {
+  const file = join(dir, "script.json");
+  const text = `${JSON.stringify(script, null, 2)}\n`;
+  if (existsSync(file)) {
+    const before = readFileSync(file);
+    const original = join(dir, "script.json.bak");
+    if (!existsSync(original)) writeFileSync(original, before);
+    writeFileSync(join(dir, "script.json.prev"), before);
+  }
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, file);
+}
 
 /** Состояние проекта: стадии, материалы, что готово, где заминка. */
 function projectState(id) {
@@ -180,6 +209,47 @@ const server = createServer(async (req, res) => {
       const stages = Array.isArray(body.stages) && body.stages.length ? body.stages : STAGES;
       for (const stage of stages) if (STAGES.includes(stage)) enqueue(db, id, stage);
       return json(res, { queued: stages, depth: queueDepth(db) });
+    }
+
+    /* Правка одного кадра моделью. Студия показывает все кадры, но поправить в них
+       реплику было нечем: оставалось гнать стадию сценария целиком — сорок минут и
+       квота. Правка пишет script.json и честно помечает, что теперь устарело. */
+    const rewriteMatch = path.match(/^\/api\/projects\/([^/]+)\/shots\/(\d+)\/rewrite$/);
+    if (rewriteMatch && req.method === "POST") {
+      const id = decodeURIComponent(rewriteMatch[1]);
+      const n = Number(rewriteMatch[2]);
+      if (!getProject(db, id)) return json(res, { error: "проект не найден" }, 404);
+
+      const script = stageArtifact(id, "script");
+      const index = (script?.shots ?? []).findIndex((shot) => shot.n === n);
+      if (index < 0) return json(res, { error: "кадр не найден" }, 404);
+
+      const body = await readBody(req);
+      const field = body.field === "onScreen" ? "onScreen" : "narration";
+      const task = rewriteTask(script.shots[index], {
+        instruction: String(body.instruction ?? "").trim(),
+        style: stageArtifact(id, "style")?.styleBlock ?? "",
+        field,
+      });
+
+      let answer;
+      try {
+        answer = await askJson({ env, ...task });
+      } catch (err) {
+        return json(res, { error: `модель не ответила: ${err.message}` }, 502);
+      }
+
+      const { shot: next, changed, rejected } = applyRewrite(script.shots[index], answer, { field });
+      if (!changed) return json(res, { changed: false, rejected, shot: script.shots[index] });
+
+      script.shots[index] = next;
+      writeScript(join(PROJECTS, id), script);
+      /* Промты, озвучка и монтаж считались от старого текста: показываем это, а не
+         оставляем «готово» на стадии, которая уже не соответствует сценарию. */
+      const stale = staleStages(true);
+      for (const stage of stale) markStage(db, id, stage, "pending");
+
+      return json(res, { changed: true, rejected, shot: next, stale });
     }
 
     // Панели рисуются кодом и отдаются браузеру как SVG — это бесплатный слой.

@@ -214,3 +214,19 @@ button:disabled { opacity: .5; cursor: default; }
 }
 .shot .copy { font-size: 11px; padding: 4px 9px; background: #fff; border-color: #cfc8b8; color: #1a1713; }
 .shot .copy:hover { border-color: var(--amber-deep); color: var(--amber-deep); }
+
+/* Правка одного кадра: единственное письменное действие на карточке, поэтому
+   поле и кнопки — заметные, а ответ модели виден тут же, без перезагрузки. */
+.shot .edit label { display: block; font-size: 12px; color: #6c665a; margin-bottom: 6px; }
+.shot .edit .instruction {
+  display: block; width: 100%; margin-top: 4px; font: 12px var(--mono);
+  padding: 6px 8px; border-radius: 6px; border: 1px solid #cfc8b8; background: #fff; color: #1a1713;
+}
+.shot .edit-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.shot .rewrite {
+  font-size: 11px; padding: 5px 10px; border-radius: 6px;
+  background: var(--ink); border-color: var(--ink); color: var(--paper);
+}
+.shot .rewrite:hover:not(:disabled) { background: var(--amber-deep); border-color: var(--amber-deep); color: #1a1713; }
+.shot .rewrite:disabled { opacity: .55; cursor: wait; }
+.shot .edit-note { font: 11px/1.4 var(--mono); color: #6c665a; flex: 1 1 100%; }

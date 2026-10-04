@@ -116,6 +116,7 @@ function renderShots(data) {
   $("#shots").innerHTML = "";
   for (const shot of shots) {
     const node = tpl.cloneNode(true);
+    node.firstElementChild.dataset.n = String(shot.n);
     node.querySelector(".num").textContent = String(shot.n).padStart(3, "0");
     node.querySelector(".narration").textContent = shot.narration;
     node.querySelector(".onscreen").textContent = shot.onScreen;
@@ -225,6 +226,43 @@ $("#shots").addEventListener("click", async (event) => {
   const was = button.textContent;
   button.textContent = "Скопировано";
   setTimeout(() => (button.textContent = was), 1400);
+});
+
+/* Правка одного кадра моделью: иначе поправить реплику можно только прогоном всей
+   стадии сценария. Сервер принимает ответ только целиком и говорит, что устарело. */
+$("#shots").addEventListener("click", async (event) => {
+  const button = event.target.closest(".rewrite");
+  if (!button || !current) return;
+  const card = button.closest(".shot");
+  const note = card.querySelector(".edit-note");
+  const field = button.dataset.field === "onScreen" ? "onScreen" : "narration";
+
+  button.disabled = true;
+  note.textContent = "модель думает…";
+  try {
+    const result = await api(
+      `/api/projects/${encodeURIComponent(current)}/shots/${encodeURIComponent(card.dataset.n)}/rewrite`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: card.querySelector(".instruction").value, field }),
+      },
+    );
+    if (result.changed) {
+      card.querySelector(".narration").textContent = result.shot.narration;
+      card.querySelector(".onscreen").textContent = result.shot.onScreen;
+      note.textContent = result.rejected.length
+        ? `принято не всё — ${result.rejected.join("; ")}`
+        : "готово · промты, озвучка и монтаж теперь устарели";
+      await refresh();
+    } else {
+      note.textContent = `не принято — ${result.rejected.join("; ") || "модель не изменила текст"}`;
+    }
+  } catch (err) {
+    note.textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 
 $("#filter").addEventListener("input", async () => {
