@@ -184,7 +184,10 @@ button:disabled { opacity: .5; cursor: default; }
   background-position: top 3px left, bottom 3px left;
 }
 .frame { position: relative; border: 1px solid #d8d2c4; border-radius: 6px; overflow: hidden; background: #fff; }
-.frame .panel svg { display: block; width: 100%; height: auto; }
+/* Панель кадра приходит и картинкой, и svg: правило нужно обоим, иначе
+   изображение ложится в карточку во всю свою ширину и обрезается на телефоне. */
+.frame .panel svg,
+.frame .panel img { display: block; width: 100%; height: auto; }
 .num {
   position: absolute; top: 6px; left: 6px;
   font: 11px var(--mono); background: var(--ink); color: var(--amber);

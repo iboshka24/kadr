@@ -24,8 +24,7 @@ import {
   stageVideoPrompts,
 } from "./stages/index.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-
-const PROJECTS = "/home/ibrohim/kadr/projects";
+import { PROJECTS } from "./paths.js";
 const env = loadEnv();
 const db = openDb(join(PROJECTS, "kadr.db"));
 

@@ -7,18 +7,19 @@
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { openDb, createProject, getProject, listProjects, allStageRuns, enqueue, queueDepth, assetsOf, STAGES, setProject } from "./db.js";
+import { openDb, createProject, getProject, listProjects, allStageRuns, enqueue, queueDepth, assetsOf, STAGES, setProject, markStage } from "./db.js";
 import { loadEnv, providersAvailable } from "./providers/llm.js";
 import { VOICES } from "./providers/voice.js";
 import { panelSvg } from "./providers/render.js";
+import { adoptProjectsFromDisk, stageDone } from "./adopt.js";
+import { PROJECTS } from "./paths.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI = join(HERE, "ui");
-const PROJECTS = "/home/ibrohim/kadr/projects";
 const PORT = Number(process.env.PORT || 4173);
 
 const db = openDb(join(PROJECTS, "kadr.db"));
@@ -43,7 +44,13 @@ const json = (res, data, code = 200) => {
 
 const stageArtifact = (projectId, stage) => {
   const file = join(PROJECTS, projectId, `${stage}.json`);
-  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    /* Битый материал одной стадии не должен закрывать весь экран проекта. */
+    return null;
+  }
 };
 
 /** Состояние проекта: стадии, материалы, что готово, где заминка. */
@@ -52,6 +59,7 @@ function projectState(id) {
   if (!project) return null;
 
   const runs = allStageRuns(db, id);
+  const projectDir = join(PROJECTS, id);
   const stages = STAGES.map((stage) => {
     const run = runs.find((r) => r.stage === stage);
     const artifact = stageArtifact(id, stage);
@@ -60,7 +68,9 @@ function projectState(id) {
       status: run?.status ?? "pending",
       error: run?.error ?? null,
       attempts: run?.attempts ?? 0,
-      ready: Boolean(artifact),
+      /* Готовность — по диску, а не по базе: у озвучки и сборки материала нет
+         вовсе, их результат лежит готовыми файлами. */
+      ready: stageDone(projectDir, stage),
       summary: summarize(stage, artifact),
     };
   });
@@ -127,6 +137,7 @@ const server = createServer(async (req, res) => {
   try {
     // ── API ──────────────────────────────────────────────────────────────────
     if (path === "/api/state") {
+      adoptProjectsFromDisk(db, PROJECTS);
       return json(res, {
         providers: providersAvailable(env),
         voices: VOICES,
